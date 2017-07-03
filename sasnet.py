@@ -9,24 +9,28 @@ import sys
 import time
 
 import keras
+import matplotlib.pyplot as plt
 import numpy as np
 import ruamel.yaml as yaml  # using ruamel for better input processing.
 from keras.layers import Conv1D, Dropout, Flatten, Dense, \
     Embedding, MaxPooling1D
 from keras.models import Sequential
 from keras.utils.np_utils import to_categorical
+from keras.utils import plot_model
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-parser = argparse.ArgumentParser(description="Use neural nets to classify scattering data.")
-parser.add_argument("path",
-                    help="Relative or absolute path to a folder containing data files")
+parser = argparse.ArgumentParser(
+    description="Use neural nets to classify scattering data.")
+parser.add_argument("path", help="Relative or absolute path to a folder "
+                                 "containing data files")
 parser.add_argument("-v", "--verbose", help="Control output verbosity",
                     action="store_true")
 parser.add_argument("-s", "--save-path",
                     help="Path to save model weights and info to")
 
 
+# noinspection PyUnusedLocal
 def read_1d(path, pattern='_all_', typef='aggr', verbosity=False):
     """
     Reads all files in the folder path. Opens the files whose names match the
@@ -42,6 +46,7 @@ def read_1d(path, pattern='_all_', typef='aggr', verbosity=False):
     :type path: String
     :type pattern: String
     :type typef: String
+    :type verbosity: Boolean
     """
     q_list, iq_list, y_list = (list() for i in range(3))
     pattern = re.compile(pattern)
@@ -85,21 +90,13 @@ def plot(q, i_q):
     :param i_q: List of I values
     :return: None
     """
-    try:
-        import matplotlib.pyplot as plt
-    except Exception:
-        plt = None
-        pass
-    if not plt:
-        raise ImportError("Matplotlib isn't installed, can't plot.")
-    else:
-        plt.style.use("classic")
-        plt.plot(q, i_q)
-        ax = plt.gca()
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.autoscale(enable=True)
-        plt.show()
+    plt.style.use("classic")
+    plt.plot(q, i_q)
+    ax = plt.gca()
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.autoscale(enable=True)
+    plt.show()
 
 
 def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
@@ -109,6 +106,8 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
 
     :param x: List of training data x
     :param y: List of corresponding categories for each vector in x
+    :param xevl: List of evaluation data
+    :param yevl: List of corresponding categories for each vector in x
     :param random_s: Random seed. Defaults to 235 for reproducibility purposes, but should be set randomly in an actual run.
     :param verbosity: Either true or false. Controls level of output.
     :param save_path: The path to save the model to. If it points to a directory, writes to a file named the current unix time. If it points to a file, the file is overwritten.
@@ -128,46 +127,59 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
 
     # Begin model definitions
     model = Sequential()
-    model.add(Embedding(4000, 64, input_length=100))
-    model.add(Conv1D(128, kernel_size=3, activation='relu'))
-    model.add(MaxPooling1D(pool_size=6))
-    model.add(Dropout(.25))
+    model.add(Embedding(1400, 64, input_length=xval.shape[1]))
     model.add(Conv1D(64, kernel_size=3, activation='relu'))
     model.add(MaxPooling1D(pool_size=6))
     model.add(Dropout(.25))
+    model.add(Conv1D(32, kernel_size=3, activation='relu'))
+    model.add(MaxPooling1D(pool_size=6))
+    model.add(Dropout(.25))
     model.add(Flatten())
-    model.add(Dense(128, activation='relu'))
+    model.add(Dense(32, activation='relu'))
     model.add(Dropout(.25))
     model.add(Dense(len(set(y)), activation='softmax'))
-    model.compile(loss=keras.losses.categorical_crossentropy,
+    model.compile(loss=keras.losses.binary_crossentropy,
                   optimizer=keras.optimizers.Adadelta(), metrics=['accuracy'])
-
+    plot_model(model, to_file="model.png")
     # Model Run
-    if v: print(model.summary())
-    history = model.fit(xval, yval, batch_size=6, epochs=50, verbose=v,
+    if v:
+        print(model.summary())
+    history = model.fit(xval, yval, batch_size=5, epochs=1, verbose=v,
                         validation_data=(xtest, ytest))
     score = None
     if not (xevl is None) and not (yevl is None):
-        e2 = LabelEncoder().fit(yevl)
-        yv = e2.transform(yevl)
+        e2 = LabelEncoder()
+        e2.fit(yevl)
+        yv = to_categorical(e2.transform(yevl))
         score = model.evaluate(xevl, yv, verbose=v)
-        print('Test loss: ', score[0])
+        print('\nTest loss: ', score[0])
         print('Test accuracy:', score[1])
 
     # Model Save
-    if save_path:
-        yaml_model = model.to_yaml()
+    plt.plot(history.history['acc'])
+    plt.plot(history.history['val_acc'])
+    plt.title('model accuracy')
+    plt.ylabel('accuracy')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper left')
+    if not (save_path is None):
         if save_path[-1:] == "/":  # Assumes *nix-style file paths
-            base = save_path + time.time()
+            base = save_path + str(time.time())
         else:
             base = save_path
-        with open(base + ".model", 'w') as fd:
-            fd.write(yaml_model)
+        if not os.path.exists(os.path.dirname(save_path)):
+            os.makedirs(os.path.dirname(save_path))
+            # with open(base + ".model", 'w') as fd:
+        #    fd.write(yaml_model)
         with open(base + ".history", 'w') as fd:
-            fd.write(model.history + "\n")
-            if not (score is None): fd.write(score + "\n")
+            fd.write(str(history.history) + "\n")
+            if not (score is None): fd.write(str(score) + "\n")
             fd.write("Seed " + str(random_s))
-        model.save_weights(base + ".h5")
+        model.save(base + ".h5")
+        with open(base + ".svg", 'w') as fd:
+            plt.savefig(fd, format='svg', bbox_inches='tight')
+
+    plt.show()
     print("Complete.")
 
 
@@ -210,15 +222,17 @@ def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
 def main(args):
     parsed = parser.parse_args(args)
     time_start = time.clock()
-    a, b, c, n = read_1d(parsed.path, pattern='_all_')
-    at, bt, ct, dt = read_1d(parsed.path, pattern='_eval_')
+    a, b, c, n = read_1d(parsed.path, pattern='_all_', verbosity=parsed.verbose)
+    at, bt, ct, dt = read_1d(parsed.path, pattern='_eval_',
+                             verbosity=parsed.verbose)
     time_end = time.clock() - time_start
-    if parsed.verbose: print(
-        "File I/O Took " + str(time_end) + " seconds for " + str(
+    if parsed.verbose:
+        print("File I/O Took " + str(time_end) + " seconds for " + str(
             n) + " lines of data.")
     r = random.randint(0, 2 ** 32 - 1)
     print("Random seed for this iter is " + str(r))
-    oned_convnet(np.asarray(b), c, np.asarray(bt), ct, random_s=r)
+    oned_convnet(np.asarray(b), c, np.asarray(bt), ct, random_s=r,
+                 verbosity=parsed.verbose, save_path=parsed.save_path)
 
 
 if __name__ == '__main__':
