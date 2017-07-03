@@ -15,6 +15,8 @@ parser.add_argument("model_file", help="Path to model file from sasnet.py")
 parser.add_argument("data_path", help="Path to load data from")
 parser.add_argument("-v", "--verbose", help="Verbose output",
                     action="store_true")
+parser.add_argument("-p", "--pattern",
+                    help="Pattern to match to files to open.")
 
 
 def load_from(path):
@@ -35,10 +37,10 @@ def predict_and_val(model, x, y):
     for p, e, in zip(prob, yt):
         p1 = p.argmax(axis=-1)
         e1 = e.argmax(axis=-1)
-        if(p[0]>.65 or p[0]<.35):
+        if p[0] > .65 or p[0] < .35:
             print("Probabilities: " + str(p) + ", Predicted: " + str(
-            unq[p1]) + ", Actual: " + str(unq[e1]) + ", Index: " + str(
-            ind) + ".")
+                unq[p1]) + ", Actual: " + str(unq[e1]) + ", Index: " + str(
+                ind) + ".")
         if p1 != e1:
             err[e1] += 1
             il.append(ind)
@@ -48,11 +50,10 @@ def predict_and_val(model, x, y):
 
 def main(args):
     parsed = parser.parse_args(args)
-    a, b, c, d, = read_1d(parsed.data_path, pattern='_testd_',
+    a, b, c, d, = read_1d(parsed.data_path, pattern=parsed.pattern,
                           verbosity=parsed.verbose)
     plot(a[67], b[67])
     plot(a[126], b[126])
-    #plot(a[])
     model = load_from(parsed.model_file)
     predict_and_val(model, b, c)
 

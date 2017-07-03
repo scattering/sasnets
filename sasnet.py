@@ -12,6 +12,7 @@ import keras
 import matplotlib.pyplot as plt
 import numpy as np
 import ruamel.yaml as yaml  # using ruamel for better input processing.
+from keras.callbacks import TensorBoard
 from keras.layers import Conv1D, Dropout, Flatten, Dense, \
     Embedding, MaxPooling1D
 from keras.models import Sequential
@@ -117,6 +118,14 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
         v = 1
     else:
         v = 0
+    base = None
+    if save_path is not None:
+        if save_path[-1:] == "/":  # Assumes *nix-style file paths
+            base = save_path + str(time.time())
+        else:
+            base = save_path
+        if not os.path.exists(os.path.dirname(save_path)):
+            os.makedirs(os.path.dirname(save_path))
 
     encoder = LabelEncoder()
     encoder.fit(y)
@@ -124,6 +133,7 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     yt = to_categorical(encoded)
     xval, xtest, yval, ytest = train_test_split(x, yt, test_size=.25,
                                                 random_state=random_s)
+    tb = TensorBoard(log_dir=os.path.dirname(base))
 
     # Begin model definitions
     model = Sequential()
@@ -141,11 +151,12 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     model.compile(loss=keras.losses.binary_crossentropy,
                   optimizer=keras.optimizers.Adadelta(), metrics=['accuracy'])
     plot_model(model, to_file="model.png")
+
     # Model Run
     if v:
         print(model.summary())
     history = model.fit(xval, yval, batch_size=5, epochs=1, verbose=v,
-                        validation_data=(xtest, ytest))
+                        validation_data=(xtest, ytest), callbacks=[tb])
     score = None
     if not (xevl is None) and not (yevl is None):
         e2 = LabelEncoder()
@@ -162,24 +173,15 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     plt.ylabel('accuracy')
     plt.xlabel('epoch')
     plt.legend(['train', 'test'], loc='upper left')
-    if not (save_path is None):
-        if save_path[-1:] == "/":  # Assumes *nix-style file paths
-            base = save_path + str(time.time())
-        else:
-            base = save_path
-        if not os.path.exists(os.path.dirname(save_path)):
-            os.makedirs(os.path.dirname(save_path))
-            # with open(base + ".model", 'w') as fd:
-        #    fd.write(yaml_model)
+    if not (base is None):
         with open(base + ".history", 'w') as fd:
             fd.write(str(history.history) + "\n")
-            if not (score is None): fd.write(str(score) + "\n")
+            if score is not None:
+                fd.write(str(score) + "\n")
             fd.write("Seed " + str(random_s))
         model.save(base + ".h5")
         with open(base + ".svg", 'w') as fd:
             plt.savefig(fd, format='svg', bbox_inches='tight')
-
-    plt.show()
     print("Complete.")
 
 
@@ -190,6 +192,8 @@ def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
     :param x: List of training data x
     :param y: List of corresponding categories for each vector in x
     :param random_s: Random seed. Defaults to 235 for reproducibility purposes, but should be set randomly in an actual run.
+    :param xevl: Evaluation data for model
+    :param yevl: Evaluation data for model
     :return: None
     """
     encoder = LabelEncoder()
