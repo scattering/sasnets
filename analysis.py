@@ -23,39 +23,47 @@ def load_from(path):
     return keras.models.load_model(path)
 
 
-def predict_and_val(model, x, y):
+def predict_and_val(model, x, y, names):
     encoder = LabelEncoder()
     encoder.fit(y)
     encoded = encoder.transform(y)
     yt = to_categorical(encoded)
 
     prob = model.predict(x)
-    err = [0, 0]
-    unq = list(set(y))
+    err = [0]*(len(set(names)))
+    unq = list(set(names))
+    unq2 = list(set(y))
     ind = 0
     il = list()
     for p, e, in zip(prob, yt):
         p1 = p.argmax(axis=-1)
         e1 = e.argmax(axis=-1)
-        if p[0] > .65 or p[0] < .35:
-            print("Probabilities: " + str(p) + ", Predicted: " + str(
-                unq[p1]) + ", Actual: " + str(unq[e1]) + ", Index: " + str(
-                ind) + ".")
-        if p1 != e1:
+        #if p[0] > .65 or p[0] < .35:
+            #print(#"Probabilities: " + str(p) + ", Predicted: " +
+             #     str(names[p1]) + ", Actual: " + str(y[e1]) + ", Index: " + str(ind)
+             #     + ".")
+        if names[p1] != y[e1]:
+            print("Predicted: " + str(names[p1]) + ", Actual: " + str(y[e1]) + ", Index: " + str(ind) + ".")
             err[e1] += 1
             il.append(ind)
         ind += 1
     print(err)
+    return il
 
 
 def main(args):
     parsed = parser.parse_args(args)
     a, b, c, d, = read_1d(parsed.data_path, pattern=parsed.pattern,
                           verbosity=parsed.verbose)
-    plot(a[67], b[67])
-    plot(a[126], b[126])
+    #plot(a[989], b[989])
+    #plot(a[126], b[126])
+    n = None
+    with open("../sasmodels/out/name", 'r') as fd:
+        n = eval(fd.readline().strip())
     model = load_from(parsed.model_file)
-    predict_and_val(model, b, c)
+    ilist = predict_and_val(model, b, c, n)
+    for i in ilist:
+        plot(a[i], b[i])
 
 
 if __name__ == '__main__':

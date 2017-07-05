@@ -8,16 +8,17 @@ import re
 import sys
 import time
 
+
 import keras
 import matplotlib.pyplot as plt
 import numpy as np
 import ruamel.yaml as yaml  # using ruamel for better input processing.
-from keras.callbacks import TensorBoard
+from keras.callbacks import TensorBoard, EarlyStopping
 from keras.layers import Conv1D, Dropout, Flatten, Dense, \
     Embedding, MaxPooling1D
 from keras.models import Sequential
-from keras.utils.np_utils import to_categorical
 from keras.utils import plot_model
+from keras.utils.np_utils import to_categorical
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
@@ -68,15 +69,19 @@ def read_1d(path, pattern='_all_', typef='aggr', verbosity=False):
         nlines = 0
         for fn in os.listdir(path):
             if pattern.search(fn):
-                with open(path + fn, 'r') as fd:
-                    templ = ast.literal_eval(fd.readline().strip())
-                    y_list += [templ[0] for i in range(templ[1])]
-                    t2 = ast.literal_eval(fd.readline().strip())
-                    q_list += [t2 for i in range(templ[1])]
-                    iq_list += ast.literal_eval(fd.readline().strip())
-                    nlines += templ[1]
-                if (n % 1000 == 0) and verbosity:
-                    print("Read " + str(nlines) + " lines.")
+                try:
+                    with open(path + fn, 'r') as fd:
+                        print("Reading " + fn)
+                        templ = ast.literal_eval(fd.readline().strip())
+                        y_list += [templ[0] for i in range(templ[1])]
+                        t2 = ast.literal_eval(fd.readline().strip())
+                        q_list += [t2 for i in range(templ[1])]
+                        iq_list += ast.literal_eval(fd.readline().strip())
+                        nlines += templ[1]
+                    if (n % 1000 == 0) and verbosity:
+                        print("Read " + str(nlines) + " lines.")
+                except:
+                    print("skipped")
     else:
         print("Error: the type " + typef + " was not recognised. Valid types "
                                            "are 'aggr' and 'json'.")
@@ -119,13 +124,14 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     else:
         v = 0
     base = None
-    if save_path is not None:
-        if save_path[-1:] == "/":  # Assumes *nix-style file paths
-            base = save_path + str(time.time())
+    sp = os.path.normpath(save_path)
+    if sp is not None:
+        if os.path.isdir(sp):
+            base = os.path.join(sp, str(time.time()))
         else:
-            base = save_path
-        if not os.path.exists(os.path.dirname(save_path)):
-            os.makedirs(os.path.dirname(save_path))
+            base = sp
+        if not os.path.exists(os.path.dirname(sp)):
+            os.makedirs(os.path.dirname(sp))
 
     encoder = LabelEncoder()
     encoder.fit(y)
@@ -133,30 +139,38 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     yt = to_categorical(encoded)
     xval, xtest, yval, ytest = train_test_split(x, yt, test_size=.25,
                                                 random_state=random_s)
-    tb = TensorBoard(log_dir=os.path.dirname(base))
+    if not len(set(y)) == len(set(yevl)):
+        raise ValueError("Differing number of categories in train (" + str(
+            len(set(y))) + ") and test (" + str(len(set(yevl))) + ") data.")
+    tb = TensorBoard(log_dir=os.path.dirname(base), histogram_freq=1)
+    es = EarlyStopping(min_delta=0.005, patience=5, verbose=v)
 
     # Begin model definitions
     model = Sequential()
-    model.add(Embedding(1400, 64, input_length=xval.shape[1]))
+    model.add(Embedding(3000, 64, input_length=xval.shape[1]))
+    model.add(Conv1D(128, kernel_size=3, activation='relu'))
+    model.add(MaxPooling1D(pool_size=6))
+    model.add(Dropout(.20))
     model.add(Conv1D(64, kernel_size=3, activation='relu'))
     model.add(MaxPooling1D(pool_size=6))
-    model.add(Dropout(.25))
-    model.add(Conv1D(32, kernel_size=3, activation='relu'))
-    model.add(MaxPooling1D(pool_size=6))
-    model.add(Dropout(.25))
+    model.add(Dropout(.20))
     model.add(Flatten())
-    model.add(Dense(32, activation='relu'))
-    model.add(Dropout(.25))
+    model.add(Dense(32, activation='tanh'))
+    model.add(Dropout(.20))
     model.add(Dense(len(set(y)), activation='softmax'))
-    model.compile(loss=keras.losses.binary_crossentropy,
-                  optimizer=keras.optimizers.Adadelta(), metrics=['accuracy'])
+    if len(set(y)) == 2:
+        l = 'binary_crossentropy'
+    else:
+        l = 'categorical_crossentropy'
+    model.compile(loss=l, optimizer=keras.optimizers.Nadam(),
+                  metrics=['accuracy'])
     plot_model(model, to_file="model.png")
 
     # Model Run
     if v:
         print(model.summary())
-    history = model.fit(xval, yval, batch_size=5, epochs=1, verbose=v,
-                        validation_data=(xtest, ytest), callbacks=[tb])
+    history = model.fit(xval, yval, batch_size=25, epochs=50, verbose=v,
+                        validation_data=(xtest, ytest), callbacks=[tb, es])
     score = None
     if not (xevl is None) and not (yevl is None):
         e2 = LabelEncoder()
@@ -175,6 +189,7 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     plt.legend(['train', 'test'], loc='upper left')
     if not (base is None):
         with open(base + ".history", 'w') as fd:
+            fd.write(str(list(set(y)))+"\n")
             fd.write(str(history.history) + "\n")
             if score is not None:
                 fd.write(str(score) + "\n")
