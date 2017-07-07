@@ -13,6 +13,8 @@ import keras
 import matplotlib.pyplot as plt
 import numpy as np
 import ruamel.yaml as yaml  # using ruamel for better input processing.
+from hyperas import optim
+from hyperopt import Trials, tpe
 from keras.callbacks import TensorBoard, EarlyStopping
 from keras.layers import Conv1D, Dropout, Flatten, Dense, \
     Embedding, MaxPooling1D
@@ -33,7 +35,7 @@ parser.add_argument("-s", "--save-path",
 
 
 # noinspection PyUnusedLocal
-def read_1d(path, pattern='_all_', typef='aggr', verbosity=False):
+def read_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
     """
     Reads all files in the folder path. Opens the files whose names match the
     regex pattern. Returns lists of Q, I(Q), and ID. Path can be a
@@ -73,14 +75,15 @@ def read_1d(path, pattern='_all_', typef='aggr', verbosity=False):
                     with open(path + fn, 'r') as fd:
                         print("Reading " + fn)
                         templ = ast.literal_eval(fd.readline().strip())
-                        y_list += [templ[0] for i in range(templ[1])]
+                        y_list.extend([templ[0] for i in range(templ[1])])
                         t2 = ast.literal_eval(fd.readline().strip())
-                        q_list += [t2 for i in range(templ[1])]
-                        iq_list += ast.literal_eval(fd.readline().strip())
+                        q_list.extend([t2 for i in range(templ[1])])
+                        iq_list.extend(ast.literal_eval(fd.readline().strip()))
                         nlines += templ[1]
                     if (n % 1000 == 0) and verbosity:
                         print("Read " + str(nlines) + " lines.")
                 except:
+                    raise
                     print("skipped")
     else:
         print("Error: the type " + typef + " was not recognised. Valid types "
@@ -147,29 +150,29 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
 
     # Begin model definitions
     model = Sequential()
-    model.add(Embedding(3000, 64, input_length=xval.shape[1]))
+    model.add(Embedding(3500, 64, input_length=xval.shape[1]))
+    model.add(Conv1D(256, kernel_size=3, activation='relu'))
+    model.add(MaxPooling1D(pool_size=6))
+    model.add(Dropout(.25))
     model.add(Conv1D(128, kernel_size=3, activation='relu'))
-    model.add(MaxPooling1D(pool_size=6))
-    model.add(Dropout(.20))
-    model.add(Conv1D(64, kernel_size=3, activation='relu'))
-    model.add(MaxPooling1D(pool_size=6))
-    model.add(Dropout(.20))
+    model.add(MaxPooling1D(pool_size=3))
+    model.add(Dropout(.25))
     model.add(Flatten())
-    model.add(Dense(32, activation='tanh'))
-    model.add(Dropout(.20))
+    model.add(Dense(64, activation='tanh'))
+    model.add(Dropout(.25))
     model.add(Dense(len(set(y)), activation='softmax'))
     if len(set(y)) == 2:
         l = 'binary_crossentropy'
     else:
         l = 'categorical_crossentropy'
-    model.compile(loss=l, optimizer=keras.optimizers.Nadam(),
+    model.compile(loss=l, optimizer=keras.optimizers.Adadelta(),
                   metrics=['accuracy'])
     plot_model(model, to_file="model.png")
 
     # Model Run
     if v:
         print(model.summary())
-    history = model.fit(xval, yval, batch_size=25, epochs=50, verbose=v,
+    history = model.fit(xval, yval, batch_size=5, epochs=50, verbose=v,
                         validation_data=(xtest, ytest), callbacks=[tb, es])
     score = None
     if not (xevl is None) and not (yevl is None):
@@ -256,3 +259,9 @@ def main(args):
 
 if __name__ == '__main__':
     main(sys.argv[1:])
+    #parsed = parser.parse_args(sys.argv[1:])
+    #best_run, best_model = optim.minimize(model=model, data=data, algo=tpe.suggest, max_evals=10, trials=Trials())
+    #xt, yt, xe, ye = data()
+    #best_model.save(parsed.save_path + ".h5")
+    #print(best_run)
+    #print("Evaluation of best model: ", best_model.evaluate(xt, yt))
