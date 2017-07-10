@@ -2,19 +2,19 @@ from __future__ import print_function
 
 import argparse
 import ast
+import logging
+import multiprocessing
 import os
 import random
 import re
 import sys
 import time
-
+from itertools import izip, repeat
 
 import keras
 import matplotlib.pyplot as plt
 import numpy as np
 import ruamel.yaml as yaml  # using ruamel for better input processing.
-from hyperas import optim
-from hyperopt import Trials, tpe
 from keras.callbacks import TensorBoard, EarlyStopping
 from keras.layers import Conv1D, Dropout, Flatten, Dense, \
     Embedding, MaxPooling1D
@@ -35,11 +35,83 @@ parser.add_argument("-s", "--save-path",
 
 
 # noinspection PyUnusedLocal
-def read_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
+def read_parallel_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
     """
     Reads all files in the folder path. Opens the files whose names match the
     regex pattern. Returns lists of Q, I(Q), and ID. Path can be a
-    relative or absolute path.
+    relative or absolute path. Uses Pool and map to speed up IO.
+
+    typef is one of 'json' or 'aggr'. JSON mode reads in all and only json files
+    in the folder specified by path. aggr mode reads in aggregated data files.
+    See sasmodels/generate_sets.py for more about these formats.
+
+    Assumes files contain 1D data.
+
+    :type path: String
+    :type pattern: String
+    :type typef: String
+    :type verbosity: Boolean
+    """
+    q_list, iq_list, y_list = (list() for i in range(3))
+    # pattern = re.compile(pattern)
+    n = 0
+    nlines = None
+    if typef == 'json':
+        for fn in os.listdir(path):
+            if pattern.search(fn):  # Only open JSON files
+                with open(path + fn, 'r') as fd:
+                    n += 1
+                    data_d = yaml.safe_load(fd)
+                    q_list.append(data_d['data']['Q'])
+                    iq_list.append(data_d["data"]["I(Q)"])
+                    y_list.append(data_d["model"])
+                if (n % 100 == 0) and verbosity:
+                    print("Read " + str(n) + " files.")
+    if typef == 'aggr':
+        nlines = 0
+        fn = os.listdir(path)
+        chunked = [fn[i: i + 8] for i in xrange(0, len(fn), 8)]
+        pool = multiprocessing.Pool(8)
+        result = np.asarray(
+            pool.map(r2, izip(chunked, repeat(path), repeat(pattern))))
+        q_list = result[0::3].tolist()
+        iq_list = result[1::3].tolist()
+        y_list = result[2::3].tolist()
+    else:
+        print("Error: the type " + typef + " was not recognised. Valid types "
+                                           "are 'aggr' and 'json'.")
+    return q_list, iq_list, y_list, nlines
+
+
+def r2(args):
+    return read_h(*args)
+
+
+def read_h(fns, path, pattern):
+    q_list, iq_list, y_list = (list() for i in range(3))
+    p = re.compile(pattern)
+    for fn in fns:
+        if p.search(fn):
+            try:
+                with open(path + fn, 'r') as fd:
+                    logging.info("Reading " + fn)
+                    templ = ast.literal_eval(fd.readline().strip())
+                    y_list.extend([templ[0] for i in range(templ[1])])
+                    t2 = ast.literal_eval(fd.readline().strip())
+                    q_list.extend([t2 for i in range(templ[1])])
+                    iq_list.extend(ast.literal_eval(fd.readline().strip()))
+            except Exception as e:
+                logging.warning(
+                    "skipped, {{0}}: {{1}}".format(e.errno, e.strerr))
+    return q_list, iq_list, y_list
+
+
+def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
+    """
+    Reads all files in the folder path. Opens the files whose names match the
+    regex pattern. Returns lists of Q, I(Q), and ID. Path can be a
+    relative or absolute path. Uses a single thread only. It is recommended to
+    use :meth:`read_parallel_1d`, except in hyperopt, where map is broken.
 
     typef is one of 'json' or 'aggr'. JSON mode reads in all and only json files
     in the folder specified by path. aggr mode reads in aggregated data files.
@@ -82,9 +154,9 @@ def read_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
                         nlines += templ[1]
                     if (n % 1000 == 0) and verbosity:
                         print("Read " + str(nlines) + " lines.")
-                except:
-                    raise
-                    print("skipped")
+                except Exception as e:
+                    logging.warning(
+                        "skipped, {{0}}: {{1}}".format(e.errno, e.strerr))
     else:
         print("Error: the type " + typef + " was not recognised. Valid types "
                                            "are 'aggr' and 'json'.")
@@ -152,10 +224,10 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     model = Sequential()
     model.add(Embedding(3500, 64, input_length=xval.shape[1]))
     model.add(Conv1D(256, kernel_size=3, activation='relu'))
-    model.add(MaxPooling1D(pool_size=6))
+    model.add(MaxPooling1D(pool_size=4))
     model.add(Dropout(.25))
     model.add(Conv1D(128, kernel_size=3, activation='relu'))
-    model.add(MaxPooling1D(pool_size=3))
+    model.add(MaxPooling1D(pool_size=4))
     model.add(Dropout(.25))
     model.add(Flatten())
     model.add(Dense(64, activation='tanh'))
@@ -192,7 +264,7 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     plt.legend(['train', 'test'], loc='upper left')
     if not (base is None):
         with open(base + ".history", 'w') as fd:
-            fd.write(str(list(set(y)))+"\n")
+            fd.write(str(list(set(y))) + "\n")
             fd.write(str(history.history) + "\n")
             if score is not None:
                 fd.write(str(score) + "\n")
@@ -244,9 +316,9 @@ def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
 def main(args):
     parsed = parser.parse_args(args)
     time_start = time.clock()
-    a, b, c, n = read_1d(parsed.path, pattern='_all_', verbosity=parsed.verbose)
-    at, bt, ct, dt = read_1d(parsed.path, pattern='_eval_',
-                             verbosity=parsed.verbose)
+    a, b, c, n = read_parallel_1d(parsed.path, pattern='_all_', verbosity=parsed.verbose)
+    at, bt, ct, dt = read_parallel_1d(parsed.path, pattern='_eval_',
+                                      verbosity=parsed.verbose)
     time_end = time.clock() - time_start
     if parsed.verbose:
         print("File I/O Took " + str(time_end) + " seconds for " + str(
@@ -258,10 +330,12 @@ def main(args):
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     main(sys.argv[1:])
-    #parsed = parser.parse_args(sys.argv[1:])
-    #best_run, best_model = optim.minimize(model=model, data=data, algo=tpe.suggest, max_evals=10, trials=Trials())
-    #xt, yt, xe, ye = data()
-    #best_model.save(parsed.save_path + ".h5")
-    #print(best_run)
-    #print("Evaluation of best model: ", best_model.evaluate(xt, yt))
+    # parsed = parser.parse_args(sys.argv[1:])
+    # best_run, best_model = optim.minimize(model=model, data=data,
+    # algo=tpe.suggest, max_evals=10, trials=Trials())
+    # xt, yt, xe, ye = data()
+    # best_model.save(parsed.save_path + ".h5")
+    # print(best_run)
+    # print("Evaluation of best model: ", best_model.evaluate(xt, yt))

@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from keras.utils import to_categorical
 from sklearn.preprocessing import LabelEncoder
 
-from sasnet import read_1d
+from sasnet import read_parallel_1d
 
 parser = argparse.ArgumentParser(
     description="Test a previously trained neural network, or use it to "
@@ -71,8 +71,8 @@ def predict(model, x, names, num=5):
 
 def main(args):
     parsed = parser.parse_args(args)
-    a, b, c, d, = read_1d(parsed.data_path, pattern=parsed.pattern,
-                          verbosity=parsed.verbose)
+    a, b, c, d, = read_parallel_1d(parsed.data_path, pattern=parsed.pattern,
+                                   verbosity=parsed.verbose)
     with open(os.path.join(os.path.dirname(parsed.data_path), "name"),
               'r') as fd:
         n = eval(fd.readline().strip())
