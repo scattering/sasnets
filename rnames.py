@@ -7,6 +7,16 @@ import sys
 
 
 def rnames(path, p="_all_"):
+    '''
+    Method to collect all filenames of models from a directory.
+
+    rnames reads all files contained in path that match the regex p, and outputs
+    the model name to a new file named name. If name exists, it is overwritten.
+
+    :param path: A string representing a filepath.
+    :param p: A regex to match files to.
+    :return: None
+    '''
     l = list()
     for fn in os.listdir(path):
         pattern = re.compile(p)

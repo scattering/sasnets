@@ -6,3 +6,4 @@ numpy>=1.13.0
 scikit-learn>=0.18.2
 hyperas>=0.4
 bottleneck>=1.2.1
+bumps>=0.7.6

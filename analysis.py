@@ -1,17 +1,19 @@
 from __future__ import print_function
 
 import argparse
+import logging
 import os
 import sys
+from scipy.cluster.hierarchy import linkage, dendrogram
 
-import keras
 import bottleneck
-import numpy as np
+import keras
 import matplotlib.pyplot as plt
+import numpy as np
 from keras.utils import to_categorical
 from sklearn.preprocessing import LabelEncoder
 
-from sasnet import read_parallel_1d
+from sasnet import read_parallel_1d, read_seq_1d
 
 parser = argparse.ArgumentParser(
     description="Test a previously trained neural network, or use it to "
@@ -23,7 +25,8 @@ parser.add_argument("model_file",
 parser.add_argument("data_path", help="Path to load data from.")
 parser.add_argument("-v", "--verbose", help="Verbose output.",
                     action="store_true")
-parser.add_argument("-c", "--classify", help="Classification mode.", action="store_true")
+parser.add_argument("-c", "--classify", help="Classification mode.",
+                    action="store_true")
 parser.add_argument("-p", "--pattern",
                     help="Pattern to match to files to open.")
 
@@ -69,16 +72,46 @@ def predict(model, x, names, num=5):
         sys.stdout.write("\n")
 
 
+def cpredict(model, x, names, num=5):
+    res = np.zeros([55,55])
+    row = 0
+    c = 0
+    prob = model.predict(x, verbose=1)
+    for p in prob:
+        pt = bottleneck.nanargmax(p)
+        res[row][pt] += 1
+        c += 1
+        if c % 2500 == 0:
+            row += 1
+            if c % 137445 == 0:
+                print(res)
+    return np.divide(res, 2500.)
+
+
+def fit(mn, q, iq):
+    logging.info("Starting fit")
+
+
+def cluster(model, x, names):
+    arr = cpredict(model, x, names)
+    z = linkage(arr, 'ward')
+    dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=names, color_threshold=.5, get_leaves=True)
+    pos = plt.gca().get_position()
+    pos[1] = 0.3
+    plt.gca().set_position(pos)
+    plt.show()
+
+
 def main(args):
     parsed = parser.parse_args(args)
-    a, b, c, d, = read_parallel_1d(parsed.data_path, pattern=parsed.pattern,
+    a, b, c, d, = read_seq_1d(parsed.data_path, pattern=parsed.pattern,
                                    verbosity=parsed.verbose)
     with open(os.path.join(os.path.dirname(parsed.data_path), "name"),
               'r') as fd:
         n = eval(fd.readline().strip())
     model = load_from(parsed.model_file)
     if parsed.classify:
-        predict(model, b, n)
+        cluster(model, b, n)
     else:
         ilist, nlist = predict_and_val(model, b, c, n)
         for i, n1 in zip(ilist, nlist):
