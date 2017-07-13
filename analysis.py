@@ -3,6 +3,7 @@ from __future__ import print_function
 import argparse
 import logging
 import os
+import random
 import sys
 from scipy.cluster.hierarchy import linkage, dendrogram
 
@@ -11,7 +12,10 @@ import keras
 import matplotlib.pyplot as plt
 import numpy as np
 from keras.utils import to_categorical
+from pandas import factorize
 from sklearn.preprocessing import LabelEncoder
+from sklearn.manifold import TSNE
+import seaborn as sns
 
 from sasnet import read_parallel_1d, read_seq_1d
 
@@ -72,7 +76,7 @@ def predict(model, x, names, num=5):
         sys.stdout.write("\n")
 
 
-def cpredict(model, x, names, num=5):
+def cpredict(model, x, num=5):
     res = np.zeros([55,55])
     row = 0
     c = 0
@@ -88,17 +92,41 @@ def cpredict(model, x, names, num=5):
     return np.divide(res, 2500.)
 
 
+def rpredict(model, x, names):
+    res = list()
+    prob = model.predict(x, verbose=1)
+    for p in prob:
+        pt = bottleneck.nanargmax(p)
+        res.append(names[pt])
+    return res
+
+
 def fit(mn, q, iq):
     logging.info("Starting fit")
 
 
-def cluster(model, x, names):
+def tcluster(model, x, names, y):
+    #xt, yt = zip(*random.sample(list(zip(x, y)), 5000))
+    #print(yt)
+    #arr = rpredict(model, x, names)
+    idx = np.random.choice(np.arange(len(x)), 1000, replace=False)
+    xt = np.take(x, idx)
+    yt = np.take(y, idx)
+    p = np.array(sns.color_palette("hls", 55))
+    t = TSNE(n_components=2, verbose=2)
+    classx = t.fit_transform(xt)
+    plt.scatter(classx[:, 0], classx[:, 1], c=p[np.asarray(factorize(yt)[0]).astype(np.int)])
+    plt.show()
+
+
+def dcluster(model, x, names):
     arr = cpredict(model, x, names)
     z = linkage(arr, 'ward')
-    dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=names, color_threshold=.5, get_leaves=True)
-    pos = plt.gca().get_position()
-    pos[1] = 0.3
-    plt.gca().set_position(pos)
+    h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=names, color_threshold=.5, get_leaves=True)
+    # pos = plt.gca().get_position()
+    # pos[1] = 0.3
+    # plt.gca().set_position(pos)
+    plt.tight_layout()
     plt.show()
 
 
@@ -111,7 +139,7 @@ def main(args):
         n = eval(fd.readline().strip())
     model = load_from(parsed.model_file)
     if parsed.classify:
-        cluster(model, b, n)
+        tcluster(model, b, n, c)
     else:
         ilist, nlist = predict_and_val(model, b, c, n)
         for i, n1 in zip(ilist, nlist):

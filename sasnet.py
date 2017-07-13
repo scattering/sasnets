@@ -211,7 +211,7 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     encoder.fit(y)
     encoded = encoder.transform(y)
     yt = to_categorical(encoded)
-    xval, xtest, yval, ytest = train_test_split(np.log10(x), yt, test_size=.25,
+    xval, xtest, yval, ytest = train_test_split(x, yt, test_size=.25,
                                                 random_state=random_s)
     if not len(set(y)) == len(set(yevl)):
         raise ValueError("Differing number of categories in train (" + str(
@@ -315,9 +315,9 @@ def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
 def main(args):
     parsed = parser.parse_args(args)
     time_start = time.clock()
-    a, b, c, n = read_seq_1d(parsed.path, pattern='_all_',
+    a, b, c, n = read_seq_1d(parsed.path, pattern='_eval_',
                                   verbosity=parsed.verbose)
-    at, bt, ct, dt = read_seq_1d(parsed.path, pattern='_eval_',
+    at, bt, ct, dt = read_seq_1d(parsed.path, pattern='_test_',
                                       verbosity=parsed.verbose)
     time_end = time.clock() - time_start
     logging.info("File I/O Took " + str(time_end) + " seconds for " + str(n) +
