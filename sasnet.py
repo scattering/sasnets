@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import argparse
 import ast
+import itertools
 import logging
 import multiprocessing
 import os
@@ -9,8 +10,8 @@ import random
 import re
 import sys
 import time
-from itertools import izip, repeat
 
+import gc
 import keras
 import matplotlib.pyplot as plt
 import numpy as np
@@ -32,13 +33,23 @@ parser.add_argument("-v", "--verbose", help="Control output verbosity",
 parser.add_argument("-s", "--save-path",
                     help="Path to save model weights and info to")
 
+gpath = ""
+gpattern = ""
+
 
 # noinspection PyUnusedLocal
 def read_parallel_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
     """
     Reads all files in the folder path. Opens the files whose names match the
     regex pattern. Returns lists of Q, I(Q), and ID. Path can be a
-    relative or absolute path. Uses Pool and map to speed up IO.
+    relative or absolute path. Uses Pool and map to speed up IO. WIP. Uses an
+    excessive amount of memory currently. It is recommended to use sequential on
+    systems with less than 16 GiB of memory.
+
+    Calling parallel on 69 150k line files, a gc, and parallel on 69 5k line
+    files takes around 70 seconds. Running sequential on both sets without a gc
+    takes around 562 seconds. Parallel peaks at 15 + GB of memory used with two
+    file reading threads. Sequential peaks at around 7 to 10 GB.
 
     typef is one of 'json' or 'aggr'. JSON mode reads in all and only json files
     in the folder specified by path. aggr mode reads in aggregated data files.
@@ -51,6 +62,8 @@ def read_parallel_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
     :type typef: String
     :type verbosity: Boolean
     """
+    global gpath
+    global gpattern
     q_list, iq_list, y_list = (list() for i in range(3))
     # pattern = re.compile(pattern)
     n = 0
@@ -67,33 +80,41 @@ def read_parallel_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
                 if (n % 100 == 0) and verbosity:
                     print("Read " + str(n) + " files.")
     if typef == 'aggr':
+        gpattern = pattern
+        gpath = path
         nlines = 0
+        l = 0
         fn = os.listdir(path)
-        chunked = [fn[i: i + 8] for i in xrange(0, len(fn), 8)]
-        pool = multiprocessing.Pool(multiprocessing.cpu_count() - 4)
+        chunked = [fn[i: i + 1] for i in xrange(0, len(fn), 1)]
+        pool = multiprocessing.Pool(multiprocessing.cpu_count() - 6, maxtasksperchild=2)
         result = np.asarray(
-            pool.map(r2, izip(chunked, repeat(path), repeat(pattern))))
+            pool.map(read_h, chunked, chunksize=1))
         pool.close()
-        q_list = result[0::3].tolist()
-        iq_list = result[1::3].tolist()
-        y_list = result[2::3].tolist()
+        pool.join()
+        logging.info("IO Done")
+        result = list(itertools.chain.from_iterable(result))
+        q_list = result[0::3]
+        iq_list = result[1::3]
+        y_list = result[2::3]
     else:
         print("Error: the type " + typef + " was not recognised. Valid types "
                                            "are 'aggr' and 'json'.")
+        return None
     return q_list, iq_list, y_list, nlines
 
 
-def r2(args):
-    return read_h(*args)
-
-
-def read_h(fns, path, pattern):
+def read_h(l):
+    logging.info(os.getpid())
+    if l is None:
+        raise Exception("Empty args")
+    global gpath
+    global gpattern
     q_list, iq_list, y_list = (list() for i in range(3))
-    p = re.compile(pattern)
-    for fn in fns:
+    p = re.compile(gpattern)
+    for fn in l:
         if p.search(fn):
             try:
-                with open(path + fn, 'r') as fd:
+                with open(gpath + fn, 'r') as fd:
                     logging.info("Reading " + fn)
                     templ = ast.literal_eval(fd.readline().strip())
                     y_list.extend([templ[0] for i in range(templ[1])])
@@ -156,7 +177,7 @@ def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
                         print("Read " + str(nlines) + " points.")
                 except Exception as e:
                     logging.warning(
-                        "skipped, {{0}}: {{1}}".format(e.errno, e.strerr))
+                        "skipped, " + str(e))
     else:
         print("Error: the type " + typef + " was not recognised. Valid types "
                                            "are 'aggr' and 'json'.")
@@ -238,7 +259,7 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
         l = 'categorical_crossentropy'
     model.compile(loss=l, optimizer=keras.optimizers.Adadelta(),
                   metrics=['accuracy'])
-    #plot_model(model, to_file="model.png")
+    # plot_model(model, to_file="model.png")
 
     # Model Run
     if v:
@@ -315,9 +336,10 @@ def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
 def main(args):
     parsed = parser.parse_args(args)
     time_start = time.clock()
-    a, b, c, n = read_seq_1d(parsed.path, pattern='_eval_',
+    a, b, c, n = read_seq_1d(parsed.path, pattern='_all_',
                                   verbosity=parsed.verbose)
-    at, bt, ct, dt = read_seq_1d(parsed.path, pattern='_test_',
+    #gc.collect()
+    at, bt, ct, dt = read_seq_1d(parsed.path, pattern='_eval_',
                                       verbosity=parsed.verbose)
     time_end = time.clock() - time_start
     logging.info("File I/O Took " + str(time_end) + " seconds for " + str(n) +

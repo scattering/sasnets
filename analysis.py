@@ -76,8 +76,8 @@ def predict(model, x, names, num=5):
         sys.stdout.write("\n")
 
 
-def cpredict(model, x, num=5):
-    res = np.zeros([55,55])
+def cpredict(model, x, num=5, l=69, pl=5000):
+    res = np.zeros([l,l])
     row = 0
     c = 0
     prob = model.predict(x, verbose=1)
@@ -85,11 +85,9 @@ def cpredict(model, x, num=5):
         pt = bottleneck.nanargmax(p)
         res[row][pt] += 1
         c += 1
-        if c % 2500 == 0:
+        if c % 5000 == 0:
             row += 1
-            if c % 137445 == 0:
-                print(res)
-    return np.divide(res, 2500.)
+    return np.divide(res, float(pl))
 
 
 def rpredict(model, x, names):
@@ -105,17 +103,18 @@ def fit(mn, q, iq):
     logging.info("Starting fit")
 
 
-def tcluster(model, x, names, y):
+def tcluster(model, x, names):
     #xt, yt = zip(*random.sample(list(zip(x, y)), 5000))
+    xt = random.sample(x, 5000)
     #print(yt)
-    #arr = rpredict(model, x, names)
-    idx = np.random.choice(np.arange(len(x)), 1000, replace=False)
-    xt = np.take(x, idx)
-    yt = np.take(y, idx)
-    p = np.array(sns.color_palette("hls", 55))
+    arr = rpredict(model, xt, names)
+    #idx = np.random.choice(np.arange(len(x)), 1000, replace=False)
+    #xt = np.take(x, idx)
+    #yt = np.take(y, idx)
+    p = np.array(sns.color_palette("hls", 69))
     t = TSNE(n_components=2, verbose=2)
     classx = t.fit_transform(xt)
-    plt.scatter(classx[:, 0], classx[:, 1], c=p[np.asarray(factorize(yt)[0]).astype(np.int)])
+    plt.scatter(classx[:, 0], classx[:, 1], c=p[np.asarray(factorize(arr)[0]).astype(np.int)])
     plt.show()
 
 
@@ -132,14 +131,15 @@ def dcluster(model, x, names):
 
 def main(args):
     parsed = parser.parse_args(args)
-    a, b, c, d, = read_seq_1d(parsed.data_path, pattern=parsed.pattern,
-                                   verbosity=parsed.verbose)
     with open(os.path.join(os.path.dirname(parsed.data_path), "name"),
               'r') as fd:
         n = eval(fd.readline().strip())
+    a, b, c, d, = read_seq_1d(parsed.data_path, pattern=parsed.pattern,
+                                   verbosity=parsed.verbose)
     model = load_from(parsed.model_file)
     if parsed.classify:
-        tcluster(model, b, n, c)
+        #tcluster(model, b, n, c)
+        tcluster(model, b, n)
     else:
         ilist, nlist = predict_and_val(model, b, c, n)
         for i, n1 in zip(ilist, nlist):
