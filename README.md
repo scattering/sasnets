@@ -1,4 +1,5 @@
-# SASNets
+[![CodeFactor](https://www.codefactor.io/repository/github/scattering/sasnets/badge)](https://www.codefactor.io/repository/github/scattering/sasnets)
+# SASNets 
 
 SASNets is a Python program for determining the shape that a SANS (Small Angle Neutron Scattering) dataset of Q and I(Q) comes from. It currently contains two nets: a traditional MLP of 9 layers, and a 1D convolutional network of 11 layers. 
 

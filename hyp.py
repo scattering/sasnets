@@ -4,7 +4,6 @@ import logging
 
 import keras
 from hyperas import optim
-from hyperas.distributions import uniform
 from hyperopt import Trials, tpe
 from keras import backend as K
 from keras.layers.convolutional import Conv1D, MaxPooling1D
@@ -17,7 +16,7 @@ def data():
     from keras.utils import np_utils
     from sklearn.preprocessing import LabelEncoder
     from sklearn.model_selection import train_test_split
-    from sasnet import read_seq_1d
+    from sas_io import read_seq_1d
     a, b, c, d = read_seq_1d("../sasmodels/out2/", pattern="_eval_",
                              verbosity=True)
     encoder = LabelEncoder()

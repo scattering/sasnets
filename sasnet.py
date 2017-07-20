@@ -1,12 +1,14 @@
+"""
+SASNets main file. Contains the main neural network code used for training networks.
+
+SASNets uses Keras and Tensorflow for the networks. You can change the backend to
+Theano or CNTK through the Keras config file.
+"""
 from __future__ import print_function
 
 import argparse
-import ast
-import itertools
 import logging
-import multiprocessing
 import os
-import re
 import sys
 import time
 
@@ -14,7 +16,6 @@ import keras
 import matplotlib.pyplot as plt
 import numpy as np
 import psycopg2 as psql
-import ruamel.yaml as yaml  # using ruamel for better input processing.
 from keras.callbacks import TensorBoard, EarlyStopping
 from keras.layers import Conv1D, Dropout, Flatten, Dense, \
     Embedding, MaxPooling1D
@@ -23,6 +24,8 @@ from keras.utils.np_utils import to_categorical
 from psycopg2 import sql
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+
+from sas_io import sql_dat_gen
 
 parser = argparse.ArgumentParser(
     description="Use neural nets to classify scattering data.")
@@ -33,47 +36,16 @@ parser.add_argument("-v", "--verbose", help="Control output verbosity",
 parser.add_argument("-s", "--save-path",
                     help="Path to save model weights and info to")
 
-gpath = ""
-gpattern = ""
-
-DEC2FLOAT = psql.extensions.new_type( # May not be working
-    psql._psycopg.DECIMAL.values,
-    'DEC2FLOAT',
-    lambda value, curs: float(value) if value is not None else None)
-psql.extensions.register_type(DEC2FLOAT, None)
+#
+# DEC2FLOAT = psql.extensions.new_type( # May not be working
+#     psql._psycopg.DECIMAL.values,
+#     'DEC2FLOAT',
+#     lambda value, curs: float(value) if value is not None else None)
+# psql.extensions.register_type(DEC2FLOAT, None)
 
 
-def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1", port="5673",
-                user="sasnets", encoder=None):
-    conn = psql.connect("dbname=" + dbname + " user=" + user + " host=" + host)
-    with conn:
-        with conn.cursor() as c:
-            c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows")
-            c.execute(
-                sql.SQL("SELECT * FROM {}").format(
-                    sql.Identifier(mname)))
-            x = np.asarray(c.fetchall())
-            # pprint(x)
-            q = x[0][1]
-            dq = x[0][2]
-            diq = x[0][3]
-            while True:
-                c.execute(
-                    sql.SQL(
-                        "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(5)").format(
-                        sql.Identifier(dname)))
-                x = np.asarray(c.fetchall())
-                iq_list = x[:, 1]
-                y_list = x[:, 2]
-                encoded = encoder.transform(y_list)
-                yt = np.asarray(to_categorical(encoded, 71))
-                q_list = np.asarray(
-                    [np.transpose([q, iq, dq, diq]) for iq in iq_list])
-                yield q_list, yt
-    conn.close()
-
-
-def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None, yval=None):
+def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
+            yval=None):
     if verbosity:
         v = 1
     else:
@@ -88,12 +60,12 @@ def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None, yv
         if not os.path.exists(os.path.dirname(sp)):
             os.makedirs(os.path.dirname(sp))
     tb = TensorBoard(log_dir=os.path.dirname(base), histogram_freq=1)
-    es = EarlyStopping(min_delta=0.005, patience=5, verbose=v)
+    es = EarlyStopping(min_delta=0.001, patience=15, verbose=v)
 
     # Begin model definitions
     model = Sequential()
     # model.add(Embedding(4000, 128, input_length=267))
-    model.add(Conv1D(256, kernel_size=8, activation='relu', input_dim=4,
+    model.add(Conv1D(300, kernel_size=8, activation='relu', input_dim=4,
                      input_length=267))
     model.add(MaxPooling1D(pool_size=4))
     model.add(Dropout(.17676))
@@ -112,7 +84,8 @@ def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None, yv
     if v:
         print(model.summary())
     history = model.fit_generator(sql_dat_gen(dn, mn, encoder=encoder), 20000,
-                                  epochs=60, workers=1, verbose=v, validation_data=(xval, yval),
+                                  epochs=60, workers=1, verbose=v,
+                                  validation_data=(xval, yval),
                                   max_queue_size=1, callbacks=[tb, es])
     score = None
 
@@ -132,162 +105,10 @@ def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None, yv
         with open(base + ".svg", 'w') as fd:
             plt.savefig(fd, format='svg', bbox_inches='tight')
     if xval is not None and yval is not None:
-        score = model.evaluate_generator((xval, yval), 2000)
+        score = model.evaluate(xval, yval, verbose=v)
         print('\nTest loss: ', score[0])
         print('Test accuracy:', score[1])
     logging.info("Complete.")
-
-
-
-# noinspection PyUnusedLocal
-def read_parallel_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
-    """
-    Reads all files in the folder path. Opens the files whose names match the
-    regex pattern. Returns lists of Q, I(Q), and ID. Path can be a
-    relative or absolute path. Uses Pool and map to speed up IO. WIP. Uses an
-    excessive amount of memory currently. It is recommended to use sequential on
-    systems with less than 16 GiB of memory.
-
-    Calling parallel on 69 150k line files, a gc, and parallel on 69 5k line
-    files takes around 70 seconds. Running sequential on both sets without a gc
-    takes around 562 seconds. Parallel peaks at 15 + GB of memory used with two
-    file reading threads. Sequential peaks at around 7 to 10 GB.
-
-    typef is one of 'json' or 'aggr'. JSON mode reads in all and only json files
-    in the folder specified by path. aggr mode reads in aggregated data files.
-    See sasmodels/generate_sets.py for more about these formats.
-
-    Assumes files contain 1D data.
-
-    :type path: String
-    :type pattern: String
-    :type typef: String
-    :type verbosity: Boolean
-    """
-    global gpath
-    global gpattern
-    q_list, dq_list, iq_list, diq_list, y_list = (list() for i in range(5))
-    # pattern = re.compile(pattern)
-    n = 0
-    nlines = None
-    if typef == 'json':
-        for fn in os.listdir(path):
-            if pattern.search(fn):  # Only open JSON files
-                with open(path + fn, 'r') as fd:
-                    n += 1
-                    data_d = yaml.safe_load(fd)
-                    q_list.append(data_d['data']['Q'])
-                    iq_list.append(data_d["data"]["I(Q)"])
-                    y_list.append(data_d["model"])
-                if (n % 100 == 0) and verbosity:
-                    print("Read " + str(n) + " files.")
-    if typef == 'aggr':
-        gpattern = pattern
-        gpath = path
-        nlines = 0
-        l = 0
-        fn = os.listdir(path)
-        chunked = [fn[i: i + 1] for i in xrange(0, len(fn), 1)]
-        pool = multiprocessing.Pool(multiprocessing.cpu_count() - 6,
-                                    maxtasksperchild=2)
-        result = np.asarray(
-            pool.map(read_h, chunked, chunksize=1))
-        pool.close()
-        pool.join()
-        logging.info("IO Done")
-        result = list(itertools.chain.from_iterable(result))
-        q_list = result[0::3]
-        iq_list = result[1::3]
-        y_list = result[2::3]
-    else:
-        print("Error: the type " + typef + " was not recognised. Valid types "
-                                           "are 'aggr' and 'json'.")
-        return None
-    return q_list, iq_list, y_list, nlines
-
-
-def read_h(l):
-    logging.info(os.getpid())
-    if l is None:
-        raise Exception("Empty args")
-    global gpath
-    global gpattern
-    q_list, iq_list, y_list = (list() for i in range(3))
-    p = re.compile(gpattern)
-    for fn in l:
-        if p.search(fn):
-            try:
-                with open(gpath + fn, 'r') as fd:
-                    logging.info("Reading " + fn)
-                    templ = ast.literal_eval(fd.readline().strip())
-                    y_list.extend([templ[0] for i in range(templ[1])])
-                    t2 = ast.literal_eval(fd.readline().strip())
-                    q_list.extend([t2 for i in range(templ[1])])
-                    iq_list.extend(ast.literal_eval(fd.readline().strip()))
-            except Exception as e:
-                logging.warning("skipped, " + str(e))
-    return q_list, iq_list, y_list
-
-
-# noinspection PyCompatibility,PyUnusedLocal
-def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
-    """
-    Reads all files in the folder path. Opens the files whose names match the
-    regex pattern. Returns lists of Q, I(Q), and ID. Path can be a
-    relative or absolute path. Uses a single thread only. It is recommended to
-    use :meth:`read_parallel_1d`, except in hyperopt, where map() is broken.
-
-    typef is one of 'json' or 'aggr'. JSON mode reads in all and only json files
-    in the folder specified by path. aggr mode reads in aggregated data files.
-    See sasmodels/generate_sets.py for more about these formats.
-
-    Assumes files contain 1D data.
-
-    :type path: String
-    :type pattern: String
-    :type typef: String
-    :type verbosity: Boolean
-    """
-    q_list, dq_list, iq_list, diq_list, y_list = (list() for i in range(5))
-    pattern = re.compile(pattern)
-    n = 0
-    nlines = None
-    if typef == 'json':
-        for fn in os.listdir(path):
-            if pattern.search(fn):  # Only open JSON files
-                with open(path + fn, 'r') as fd:
-                    n += 1
-                    data_d = yaml.safe_load(fd)
-                    q_list.append(data_d['data']['Q'])
-                    iq_list.append(data_d["data"]["I(Q)"])
-                    y_list.append(data_d["model"])
-                if (n % 100 == 0) and verbosity:
-                    print("Read " + str(n) + " files.")
-    if typef == 'aggr':
-        nlines = 0
-        for fn in sorted(os.listdir(path)):
-            if pattern.search(fn):
-                try:
-                    with open(path + fn, 'r') as fd:
-                        print("Reading " + fn)
-                        templ = ast.literal_eval(fd.readline().strip())
-                        y_list.extend([templ[0] for i in xrange(templ[1])])
-                        t2 = ast.literal_eval(fd.readline().strip())
-                        q_list.extend([t2 for i in xrange(templ[1])])
-                        iq_list.extend(ast.literal_eval(fd.readline().strip()))
-                        dqt = ast.literal_eval(fd.readline().strip())
-                        dq_list.extend([dqt for i in xrange(templ[1])])
-                        diqt = ast.literal_eval(fd.readline().strip())
-                        diq_list.extend([diqt for i in xrange(templ[1])])
-                        nlines += templ[1]
-                    if (n % 1000 == 0) and verbosity:
-                        print("Read " + str(nlines) + " points.")
-                except Exception as e:
-                    logging.warning("skipped, " + str(e))
-    else:
-        print("Error: the type " + typef + " was not recognised. Valid types "
-                                           "are 'aggr' and 'json'.")
-    return q_list, iq_list, y_list, dq_list, diq_list, nlines
 
 
 def plot(q, i_q):
@@ -312,14 +133,14 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     """
     Runs a 1D convolutional classification neural net on the input data x and y.
 
-    :param x: List of training data x
-    :param y: List of corresponding categories for each vector in x
-    :param xevl: List of evaluation data
-    :param yevl: List of corresponding categories for each vector in x
+    :param x: List of training data x.
+    :param y: List of corresponding categories for each vector in x.
+    :param xevl: List of evaluation data.
+    :param yevl: List of corresponding categories for each vector in x.
     :param random_s: Random seed. Defaults to 235 for reproducibility purposes, but should be set randomly in an actual run.
     :param verbosity: Either true or false. Controls level of output.
     :param save_path: The path to save the model to. If it points to a directory, writes to a file named the current unix time. If it points to a file, the file is overwritten.
-    :return: None
+    :return: None.
     """
     if verbosity:
         v = 1
@@ -405,11 +226,11 @@ def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
     """
     Runs a traditional MLP categorisation neural net on the input data x and y.
 
-    :param x: List of training data x
-    :param y: List of corresponding categories for each vector in x
+    :param x: List of training data x.
+    :param y: List of corresponding categories for each vector in x.
     :param random_s: Random seed. Defaults to 235 for reproducibility purposes, but should be set randomly in an actual run.
-    :param xevl: Evaluation data for model
-    :param yevl: Evaluation data for model
+    :param xevl: Evaluation data for model.
+    :param yevl: Evaluation data for model.
     :return: None
     """
     encoder = LabelEncoder()
@@ -431,7 +252,7 @@ def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
     model.compile(loss='categorical_crossentropy', optimizer="adam",
                   metrics=['accuracy'])
     print(model.summary())
-    history = model.fit(xval, yval, batch_size=10, epochs=10, verbose=1,
+    model.fit(xval, yval, batch_size=10, epochs=10, verbose=1,
                         validation_data=(xtest, ytest))
     if xevl and yevl:
         score = model.evaluate(xtest, ytest, verbose=0)
@@ -440,6 +261,12 @@ def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
 
 
 def main(args):
+    """
+    Main method. Takes in arguments from command line and runs a model.
+
+    :param args: Command line args.
+    :return: None.
+    """
     parsed = parser.parse_args(args)
     # time_start = time.clock()
     # a, b, c, d, e, n = read_seq_1d(parsed.path, pattern='_all_',
@@ -463,6 +290,7 @@ def main(args):
             y = [i[0] for i in xt]
             encoder = LabelEncoder()
             encoder.fit(y)
+
             c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows")
             c.execute(
                     sql.SQL("SELECT * FROM {}").format(
@@ -472,15 +300,15 @@ def main(args):
             dq = x[0][2]
             diq = x[0][3]
             c.execute(sql.SQL(
-                            "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(10000)").format(
+                "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(10000)").format(
                             sql.Identifier("eval_data")))
             x = np.asarray(c.fetchall())
             iq_list = x[:, 1]
             y_list = x[:, 2]
             encoded = encoder.transform(y_list)
             yt = np.asarray(to_categorical(encoded, 71))
-            q_list = np.asarray([np.transpose([q, iq, dq, diq]) for iq in iq_list])
-    # print(sorted(y))
+            q_list = np.asarray([np.transpose([q, iq, dq, diq]) for iq in
+                                 iq_list])
 
     sql_net("train_data", "train_metadata",
             verbosity=parsed.verbose, save_path=parsed.save_path,

@@ -1,3 +1,7 @@
+"""
+File used for analysis of SASNet networks using various techniques, including
+dendrograms and confusion matrices.
+"""
 from __future__ import print_function
 
 import argparse
@@ -5,19 +9,19 @@ import logging
 import os
 import random
 import sys
-from scipy.cluster.hierarchy import linkage, dendrogram
 
 import bottleneck
 import keras
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 from keras.utils import to_categorical
 from pandas import factorize
-from sklearn.preprocessing import LabelEncoder
+from scipy.cluster.hierarchy import linkage, dendrogram
 from sklearn.manifold import TSNE
-import seaborn as sns
+from sklearn.preprocessing import LabelEncoder
 
-from sasnet import read_parallel_1d, read_seq_1d
+from sas_io import read_seq_1d
 
 parser = argparse.ArgumentParser(
     description="Test a previously trained neural network, or use it to "
@@ -36,10 +40,25 @@ parser.add_argument("-p", "--pattern",
 
 
 def load_from(path):
+    """
+    Loads a model from the specified path.
+    :param path: Relative or absolute path to the .h5 model file
+    :return: The loaded model.
+    """
     return keras.models.load_model(os.path.normpath(path))
 
 
 def predict_and_val(model, x, y, names):
+    """
+    Runs the model on the input datasets and compares the results with the
+    correct labels provided from y.
+
+    :param model: The model to evaluate.
+    :param x: List of x values to predict on.
+    :param y: List of y values to predict on.
+    :param names: A list of all possible model names.
+    :return: Two lists, il and nl, which are the indices of the model and its proper name respectively.
+    """
     encoder = LabelEncoder()
     encoder.fit(y)
     encoded = encoder.transform(y)
@@ -65,6 +84,15 @@ def predict_and_val(model, x, y, names):
 
 
 def predict(model, x, names, num=5):
+    """
+    Runs a Keras model to predict based on input.
+
+    :param model: The model to use.
+    :param x: The x inputs to predict from.
+    :param names: A list of all model names.
+    :param num: The top num probabilities and models will be printed.
+    :return: None
+    """
     prob = model.predict(x)
     for p in prob:
         pt = bottleneck.argpartition(p, num)[-num:]
@@ -76,8 +104,17 @@ def predict(model, x, names, num=5):
         sys.stdout.write("\n")
 
 
-def cpredict(model, x, num=5, l=69, pl=5000):
-    res = np.zeros([l,l])
+def cpredict(model, x, l=69, pl=5000):
+    """
+    Runs a Keras model to create a confusion matrix.
+
+    :param model: Model to use.
+    :param x: A list of x values to predict on.
+    :param l: The number of input models.
+    :param pl: The number of data iterations per model.
+    :return: A confusion matrix of percentages
+    """
+    res = np.zeros([l, l])
     row = 0
     c = 0
     prob = model.predict(x, verbose=1)
@@ -91,6 +128,14 @@ def cpredict(model, x, num=5, l=69, pl=5000):
 
 
 def rpredict(model, x, names):
+    """
+    Same as predict, but outputs names only.
+
+    :param model: The model to use.
+    :param x: List of x to predict on.
+    :param names: List of all model names.
+    :return: List of predicted names.
+    """
     res = list()
     prob = model.predict(x, verbose=1)
     for p in prob:
@@ -100,45 +145,71 @@ def rpredict(model, x, names):
 
 
 def fit(mn, q, iq):
+    """
+    Fit resulting data using bumps server. Currently unimplemented.
+
+    :param mn: Model name.
+    :param q: List of q values.
+    :param iq: List of I(q) values.
+    :return: Bumps fit.
+    """
     logging.info("Starting fit")
 
 
 def tcluster(model, x, names):
-    #xt, yt = zip(*random.sample(list(zip(x, y)), 5000))
+    """
+    Displays a t-SNE cluster coloured by the model predicted labels.
+
+    :param model: Model to use.
+    :param x: List of x values to predict on.
+    :param names: List of all model names.
+    :return: The tSNE object that was plotted.
+    """
     xt = random.sample(x, 5000)
-    #print(yt)
     arr = rpredict(model, xt, names)
-    #idx = np.random.choice(np.arange(len(x)), 1000, replace=False)
-    #xt = np.take(x, idx)
-    #yt = np.take(y, idx)
     p = np.array(sns.color_palette("hls", 69))
     t = TSNE(n_components=2, verbose=2)
     classx = t.fit_transform(xt)
-    plt.scatter(classx[:, 0], classx[:, 1], c=p[np.asarray(factorize(arr)[0]).astype(np.int)])
+    plt.scatter(classx[:, 0], classx[:, 1],
+                c=p[np.asarray(factorize(arr)[0]).astype(np.int)])
     plt.show()
+    return classx
 
 
 def dcluster(model, x, names):
+    """
+    Displays a dendrogram clustering based on the confusion matrix.
+
+    :param model: The model to predict on.
+    :param x: A list of x values to predict on.
+    :param names: List of all model names.
+    :return: The dendrogram object.
+    """
     arr = cpredict(model, x, names)
     z = linkage(arr, 'ward')
-    h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=names, color_threshold=.5, get_leaves=True)
-    # pos = plt.gca().get_position()
-    # pos[1] = 0.3
-    # plt.gca().set_position(pos)
+    h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=names,
+                   color_threshold=.5, get_leaves=True)
     plt.tight_layout()
     plt.show()
+    return h
 
 
 def main(args):
+    """
+    Main method. Called from command line; uses argparse.
+
+    :param args: Arguments from command line.
+    :return: None.
+    """
     parsed = parser.parse_args(args)
     with open(os.path.join(os.path.dirname(parsed.data_path), "name"),
               'r') as fd:
         n = eval(fd.readline().strip())
     a, b, c, d, = read_seq_1d(parsed.data_path, pattern=parsed.pattern,
-                                   verbosity=parsed.verbose)
+                              verbosity=parsed.verbose)
     model = load_from(parsed.model_file)
     if parsed.classify:
-        #tcluster(model, b, n, c)
+        # tcluster(model, b, n, c)
         tcluster(model, b, n)
     else:
         ilist, nlist = predict_and_val(model, b, c, n)

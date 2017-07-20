@@ -13,8 +13,6 @@ import re
 import sqlite3
 import sys
 
-import logging
-
 db = "/home/chwang/sql/data.db"
 parser = argparse.ArgumentParser()
 parser.add_argument("key", help="DB Table identifier")
@@ -25,6 +23,11 @@ parser.add_argument("path", help="Relative or absolute path to a folder "
 
 # noinspection SqlNoDataSourceInspection
 def main(args):
+    """
+    Main method. args come from system command line; should conform to argparse arguments.
+    :param args: Command line args
+    :return: None
+    """
     parsed = parser.parse_args(args)
     conn = sqlite3.connect(db)
     c = conn.cursor()
@@ -47,11 +50,14 @@ def main(args):
                     iq_list.extend(ast.literal_eval(fd.readline().strip()))
                     nlines += templ[1]
                     for q, iq, y in zip(q_list, iq_list, y_list):
-                        z = "INSERT INTO data_" + parsed.key + " VALUES ('" +str(y)+ "', "+ str(len(q))+", '" +str(q)+ "', '"+ str(iq)+"')"
+                        z = "INSERT INTO data_" + parsed.key + " VALUES ('" + str(
+                            y) + "', " + str(len(q)) + ", '" + str(
+                            q) + "', '" + str(iq) + "')"
                         c.execute(z)
                         conn.commit()
             except:
                 raise
+
 
 if __name__ == "__main__":
     main(sys.argv[1:])
