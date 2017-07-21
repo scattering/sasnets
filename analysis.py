@@ -5,6 +5,7 @@ dendrograms and confusion matrices.
 from __future__ import print_function
 
 import argparse
+import ast
 import logging
 import os
 import random
@@ -14,14 +15,14 @@ import bottleneck
 import keras
 import matplotlib.pyplot as plt
 import numpy as np
+import psycopg2 as psql
 import seaborn as sns
 from keras.utils import to_categorical
 from pandas import factorize
+from psycopg2 import sql
 from scipy.cluster.hierarchy import linkage, dendrogram
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import LabelEncoder
-
-from sas_io import read_seq_1d
 
 parser = argparse.ArgumentParser(
     description="Test a previously trained neural network, or use it to "
@@ -114,7 +115,7 @@ def cpredict(model, x, l=69, pl=5000):
     :param pl: The number of data iterations per model.
     :return: A confusion matrix of percentages
     """
-    res = np.zeros([l, l])
+    res = np.zeros([71, 71])
     row = 0
     c = 0
     prob = model.predict(x, verbose=1)
@@ -154,6 +155,7 @@ def fit(mn, q, iq):
     :return: Bumps fit.
     """
     logging.info("Starting fit")
+    return (mn, q, iq)
 
 
 def tcluster(model, x, names):
@@ -186,7 +188,7 @@ def dcluster(model, x, names):
     :return: The dendrogram object.
     """
     arr = cpredict(model, x, names)
-    z = linkage(arr, 'ward')
+    z = linkage(arr, 'average')
     h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=names,
                    color_threshold=.5, get_leaves=True)
     plt.tight_layout()
@@ -204,18 +206,49 @@ def main(args):
     parsed = parser.parse_args(args)
     with open(os.path.join(os.path.dirname(parsed.data_path), "name"),
               'r') as fd:
-        n = eval(fd.readline().strip())
-    a, b, c, d, = read_seq_1d(parsed.data_path, pattern=parsed.pattern,
-                              verbosity=parsed.verbose)
+        n = ast.literal_eval(fd.readline().strip())
+        # q, iq, y, dq, diq, nlines = read_seq_1d(parsed.data_path,
+        # pattern=parsed.pattern,
+        # verbosity=parsed.verbose)
+    conn = psql.connect("dbname=sas_data user=sasnets host=127.0.0.1")
+    # conn.set_session(readonly=True)
+    with conn:
+        with conn.cursor() as c:
+            c.execute("SELECT model FROM train_data;")
+            xt = set(c.fetchall())
+            y = [i[0] for i in xt]
+            encoder = LabelEncoder()
+            encoder.fit(y)
+
+            c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows")
+            c.execute(
+                sql.SQL("SELECT * FROM {}").format(
+                    sql.Identifier("train_metadata")))
+            x = np.asarray(c.fetchall())
+            q = x[0][1]
+            dq = x[0][2]
+            diq = x[0][3]
+            c.execute(sql.SQL(
+                "SELECT * FROM {}").format(
+                sql.Identifier("eval_data")))
+            x = np.asarray(c.fetchall())
+            iq_list = x[:, 1]
+            y_list = x[:, 2]
+            encoded = encoder.transform(y_list)
+            yt = np.asarray(to_categorical(encoded, 71))
+            q_list = np.asarray([np.transpose([q, iq, dq, diq]) for iq in
+                                 iq_list])
     model = load_from(parsed.model_file)
     if parsed.classify:
         # tcluster(model, b, n, c)
-        tcluster(model, b, n)
+        z = dcluster(model, q_list, n)
+        plt.pcolor(z, cmap='RdBu')
+        plt.show()
     else:
-        ilist, nlist = predict_and_val(model, b, c, n)
+        ilist, nlist = predict_and_val(model, q, y, n)
         for i, n1 in zip(ilist, nlist):
             plt.style.use("classic")
-            plt.plot(a[i], b[i])
+            plt.plot(q[i], iq[i])
             ax = plt.gca()
             ax.set_xscale("log")
             ax.set_yscale("log")

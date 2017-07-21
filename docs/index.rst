@@ -12,7 +12,9 @@ Contents:
    :maxdepth: 2
 
    overview
+   source/install
    source/sasnets
+   source/custom
 
 
 Indices and tables
@@ -21,4 +23,3 @@ Indices and tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
-

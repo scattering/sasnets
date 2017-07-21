@@ -33,7 +33,9 @@ def main(args):
     c = conn.cursor()
     if parsed.create:
         c.execute(
-            "CREATE TABLE data_" + parsed.key + "(Name TEXT NOT NULL, Num INTEGER NOT NULL, Q TEXT NOT NULL, IQ TEXT NOT NULL)")
+            "CREATE TABLE data_" + parsed.key + "(Name TEXT NOT NULL, Num "
+                                                "INTEGER NOT NULL, Q TEXT NOT "
+                                                "NULL, IQ TEXT NOT NULL)")
     path = parsed.path
     nlines = 0
     pattern = re.compile("all")

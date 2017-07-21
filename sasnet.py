@@ -1,8 +1,9 @@
 """
-SASNets main file. Contains the main neural network code used for training networks.
+SASNets main file. Contains the main neural network code used for training
+networks.
 
-SASNets uses Keras and Tensorflow for the networks. You can change the backend to
-Theano or CNTK through the Keras config file.
+SASNets uses Keras and Tensorflow for the networks. You can change the backend
+to Theano or CNTK through the Keras config file.
 """
 from __future__ import print_function
 
@@ -46,6 +47,19 @@ parser.add_argument("-s", "--save-path",
 
 def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
             yval=None):
+    """
+    A oned convnet that uses a generator reading from a Postgres database
+    instead of loading all files into memory at once.
+
+    :param dn: The data table name.
+    :param mn: The metadata table name.
+    :param verbosity: The verbosity level.
+    :param save_path: The path to save model output and weights to.
+    :param encoder: A LabelEncoder for encoding labels.
+    :param xval: A list of validation data, x version.
+    :param yval: A list of validation data, label version.
+    :return: None
+    """
     if verbosity:
         v = 1
     else:
@@ -64,9 +78,7 @@ def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
 
     # Begin model definitions
     model = Sequential()
-    # model.add(Embedding(4000, 128, input_length=267))
-    model.add(Conv1D(300, kernel_size=8, activation='relu', input_dim=4,
-                     input_length=267))
+    model.add(Conv1D(256, kernel_size=8, activation='relu', input_shape=[267,2]))
     model.add(MaxPooling1D(pool_size=4))
     model.add(Dropout(.17676))
     model.add(Conv1D(256, kernel_size=6, activation='relu'))
@@ -296,8 +308,8 @@ def main(args):
                     sql.SQL("SELECT * FROM {}").format(
                         sql.Identifier("train_metadata")))
             x = np.asarray(c.fetchall())
-            q = x[0][1]
-            dq = x[0][2]
+            # q = x[0][1]
+            # dq = x[0][2]
             diq = x[0][3]
             c.execute(sql.SQL(
                 "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(10000)").format(
@@ -307,8 +319,8 @@ def main(args):
             y_list = x[:, 2]
             encoded = encoder.transform(y_list)
             yt = np.asarray(to_categorical(encoded, 71))
-            q_list = np.asarray([np.transpose([q, iq, dq, diq]) for iq in
-                                 iq_list])
+            q_list = np.log10(np.asarray([np.transpose([iq, diq]) for iq in
+                                 iq_list]))
 
     sql_net("train_data", "train_metadata",
             verbosity=parsed.verbose, save_path=parsed.save_path,

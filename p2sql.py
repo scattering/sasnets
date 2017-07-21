@@ -21,7 +21,7 @@ parser.add_argument("path", help="Relative or absolute path to a folder "
                                  "containing data files")
 
 
-# noinspection SqlNoDataSourceInspection
+# noinspection SqlNoDataSourceInspection,SqlResolve
 def main(args):
     """
     Main function. Args should conform to the argparse args specified.

@@ -14,18 +14,24 @@ import re
 
 import numpy as np
 import psycopg2 as psql
-import ruamel.yaml as yaml  # using ruamel for better input processing.
 from keras.utils.np_utils import to_categorical
 from psycopg2 import sql
 
 gpath = ""
 gpattern = ""
 
+try: # Python 3 compatability
+    xrange(1)
+except:
+    xrange = range
+
+
 def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1",
                 user="sasnets", encoder=None):
     """
     A pythonic generator that gets its data from a PostgreSQL database. Yields a
     (q, iq, dq, diq) list and a label list.
+
     :param dname: The data table name to connect to.
     :param mname: The metadata table name to connect to.
     :param dbname: The database name.
@@ -43,8 +49,6 @@ def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1",
                     sql.Identifier(mname)))
             x = np.asarray(c.fetchall())
             # pprint(x)
-            q = x[0][1]
-            dq = x[0][2]
             diq = x[0][3]
             while True:
                 c.execute(
@@ -56,15 +60,15 @@ def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1",
                 y_list = x[:, 2]
                 encoded = encoder.transform(y_list)
                 yt = np.asarray(to_categorical(encoded, 71))
-                q_list = np.asarray(
-                    [np.transpose([q, iq, dq, diq]) for iq in iq_list])
+                q_list = np.log10(np.asarray(
+                    [np.transpose([iq, diq]) for iq in iq_list]))
                 yield q_list, yt
     conn.close()
 
     # noinspection PyUnusedLocal
 
 
-def read_parallel_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
+def read_parallel_1d(path, pattern='_eval_', typef='aggr'):
     """
     Reads all files in the folder path. Opens the files whose names match the
     regex pattern. Returns lists of Q, I(Q), and ID. Path can be a
@@ -75,7 +79,8 @@ def read_parallel_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
     Calling parallel on 69 150k line files, a gc, and parallel on 69 5k line
     files takes around 70 seconds. Running sequential on both sets without a gc
     takes around 562 seconds. Parallel peaks at 15 + GB of memory used with two
-    file reading threads. Sequential peaks at around 7 to 10 GB.
+    file reading threads. Sequential peaks at around 7 to 10 GB. Use at your own
+    risk. Be prepared to kill the threads and/or press the reset button.
 
     typef is one of 'json' or 'aggr'. JSON mode reads in all and only json files
     in the folder specified by path. aggr mode reads in aggregated data files.
@@ -90,20 +95,8 @@ def read_parallel_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
     """
     global gpath
     global gpattern
-    q_list, dq_list, iq_list, diq_list, y_list = (list() for i in range(5))
-    #pattern = re.compile(pattern)
-    n = 0
-    if typef == 'json':
-        for fn in os.listdir(path):
-            if pattern.search(fn):  # Only open JSON files
-                with open(path + fn, 'r') as fd:
-                    n += 1
-                    data_d = yaml.safe_load(fd)
-                    q_list.append(data_d['data']['Q'])
-                    iq_list.append(data_d["data"]["I(Q)"])
-                    y_list.append(data_d["model"])
-                if (n % 100 == 0) and verbosity:
-                    print("Read " + str(n) + " files.")
+    # q_list, iq_list, y_list = (list() for i in range(3))
+    # pattern = re.compile(pattern)
     if typef == 'aggr':
         gpattern = pattern
         gpath = path
@@ -133,13 +126,14 @@ def read_parallel_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
 def read_h(l):
     """
     Read helper for parallel read.
+
     :param l: A list of filenames to read from.
     :return: Three lists, Q, IQ, and Y, corresponding to Q data, I(Q) data, and model labels respectively.
     """
     logging.info(os.getpid())
     if l is None:
         raise Exception("Empty args")
-    global gpath
+    global gpath # Abuse globals because pool only passes one argument
     global gpattern
     q_list, iq_list, y_list = (list() for i in range(3))
     p = re.compile(gpattern)
@@ -183,11 +177,16 @@ def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
     n = 0
     nlines = None
     if typef == 'json':
+        try:
+            from ruamel.yaml import \
+                safe_load  # using ruamel for better input processing.
+        except ImportError:
+            from json import loads as safe_load
         for fn in os.listdir(path):
             if pattern.search(fn):  # Only open JSON files
                 with open(path + fn, 'r') as fd:
                     n += 1
-                    data_d = yaml.safe_load(fd)
+                    data_d = safe_load(fd)
                     q_list.append(data_d['data']['Q'])
                     iq_list.append(data_d["data"]["I(Q)"])
                     y_list.append(data_d["model"])
