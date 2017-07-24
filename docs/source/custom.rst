@@ -36,4 +36,12 @@ The gen_models.sh script is short:
   PYOPENCL_CTX=2; export PYOPENCL_CTX
   python -m sasmodels.generate_sets $*
 
-It first sets the location of sasview, bumps and periodictable, which are used in generating data for models (lines 2 through 5). 
+It first sets the location of sasview, bumps and periodictable, which are used in generating data for models (lines 2 through 5).
+It then enables pyopencl compiler output, which will print out warnings when compiling models for the CPU.
+With CTX, this selects a OpenCL device to compute on. This is an index from ::
+
+  pyopencl.create_some_context()
+
+The exact number can be deterimed by running this command in a Python shell. The Intel CPU is typically 0, the Intel GPU 1, and the discrete unit (AMD or Nvidia) 2.
+It is recommended that you use the discrete GPU if possible, as it is many times faster than the CPU/integrated graphics.
+It is known that some models are broken on certain hardware devices. If a model fails to produce data with "Maths error, bad model", try forcing SASmodels to build using a different device, if you have one.
