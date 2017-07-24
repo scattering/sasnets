@@ -37,12 +37,12 @@ parser.add_argument("-v", "--verbose", help="Control output verbosity",
 parser.add_argument("-s", "--save-path",
                     help="Path to save model weights and info to")
 
-#
-# DEC2FLOAT = psql.extensions.new_type( # May not be working
-#     psql._psycopg.DECIMAL.values,
-#     'DEC2FLOAT',
-#     lambda value, curs: float(value) if value is not None else None)
-# psql.extensions.register_type(DEC2FLOAT, None)
+
+DEC2FLOAT = psql.extensions.new_type(
+     psql._psycopg.DECIMAL.values,
+     'DEC2FLOAT',
+     lambda value, curs: float(value) if value is not None else None)
+psql.extensions.register_type(DEC2FLOAT, None)
 
 
 def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
@@ -87,7 +87,7 @@ def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
     model.add(Flatten())
     model.add(Dense(64, activation='tanh'))
     model.add(Dropout(.20582))
-    model.add(Dense(71, activation='softmax'))
+    model.add(Dense(64, activation='softmax'))
     model.compile(loss="categorical_crossentropy",
                   optimizer=keras.optimizers.Adadelta(),
                   metrics=['accuracy'])
@@ -297,32 +297,60 @@ def main(args):
     # conn.set_session(readonly=True)
     with conn:
         with conn.cursor() as c:
-            c.execute("SELECT model FROM train_data;")
+            c.execute("SELECT model FROM new_train_data;")
             xt = set(c.fetchall())
             y = [i[0] for i in xt]
+            #c.execute("SELECT model FROM new_eval_data;")
+            #xt = set(c.fetchall())
+            #y2 = set([i[0] for i in xt])
+            #z=['adsorbed_layer', 'barbell', 'bcc_paracrystal',
+             #'be_polyelectrolyte', 'binary_hard_sphere', 'broad_peak',
+             #'capped_cylinder', 'core_multi_shell', 'core_shell_bicelle',
+             #'core_shell_bicelle_elliptical', 'core_shell_cylinder',
+             #'core_shell_ellipsoid', 'core_shell_parallelepiped',
+             #'core_shell_sphere', 'correlation_length', 'cylinder', 'dab',
+             #'ellipsoid', 'elliptical_cylinder', 'flexible_cylinder',
+             #'flexible_cylinder_elliptical', 'fractal', 'fractal_core_shell',
+             #'fuzzy_sphere', 'gauss_lorentz_gel', 'gaussian_peak', 'gel_fit',
+             #'guinier', 'guinier_porod', 'hardsphere', 'hayter_msa',
+             #'hollow_cylinder', 'hollow_rectangular_prism',
+             #'hollow_rectangular_prism_thin_walls', 'lamellar', 'lamellar_hg',
+             #'lamellar_hg_stack_caille', 'lamellar_stack_caille',
+             #'lamellar_stack_paracrystal', 'line', 'linear_pearls', 'lorentz',
+             #'mass_fractal', 'mass_surface_fractal', 'mono_gauss_coil',
+             #'multilayer_vesicle', 'onion', 'parallelepiped', 'peak_lorentz',
+             #'pearl_necklace', 'poly_gauss_coil', 'polymer_excl_volume',
+             #'polymer_micelle', 'porod', 'power_law', 'pringle', 'raspberry',
+             #'rectangular_prism', 'rpa', 'sphere', 'spherical_sld', 'spinodal',
+             #'squarewell', 'stacked_disks', 'star_polymer', 'stickyhardsphere',
+             #'surface_fractal', 'teubner_strey', 'triaxial_ellipsoid',
+            # 'two_lorentzian', 'two_power_law', 'unified_power_Rg', 'vesicle']
             encoder = LabelEncoder()
             encoder.fit(y)
-
+            #for m in z:
+             #   if(not y.__contains__(m)):
+              #      print(m)
             c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows")
-            c.execute(
-                    sql.SQL("SELECT * FROM {}").format(
-                        sql.Identifier("train_metadata")))
-            x = np.asarray(c.fetchall())
+            #c.execute(
+            #        sql.SQL("SELECT * FROM {}").format(
+            #            sql.Identifier("train_metadata")))
+            #x = np.asarray(c.fetchall())
             # q = x[0][1]
             # dq = x[0][2]
-            diq = x[0][3]
+            #diq = x[0][3]
             c.execute(sql.SQL(
                 "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(10000)").format(
-                            sql.Identifier("eval_data")))
+                            sql.Identifier("new_eval_data")))
             x = np.asarray(c.fetchall())
             iq_list = x[:, 1]
-            y_list = x[:, 2]
+            diq = x[:,2]
+            y_list = x[:, 3]
             encoded = encoder.transform(y_list)
-            yt = np.asarray(to_categorical(encoded, 71))
-            q_list = np.log10(np.asarray([np.transpose([iq, diq]) for iq in
-                                 iq_list]))
+            yt = np.asarray(to_categorical(encoded, 64))
+            q_list = np.asarray([np.transpose([np.log10(iq), np.log10(dq)]) for iq, dq in
+                                 zip(iq_list, diq)])
 
-    sql_net("train_data", "train_metadata",
+    sql_net("new_train_data", "new_train_metadata",
             verbosity=parsed.verbose, save_path=parsed.save_path,
             encoder=encoder, xval=q_list, yval=yt)
 

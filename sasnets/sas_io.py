@@ -49,7 +49,6 @@ def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1",
                     sql.Identifier(mname)))
             x = np.asarray(c.fetchall())
             # pprint(x)
-            diq = x[0][3]
             while True:
                 c.execute(
                     sql.SQL(
@@ -57,11 +56,12 @@ def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1",
                         sql.Identifier(dname)))
                 x = np.asarray(c.fetchall())
                 iq_list = x[:, 1]
-                y_list = x[:, 2]
+                diq = x[:,2]
+                y_list = x[:, 3]
                 encoded = encoder.transform(y_list)
-                yt = np.asarray(to_categorical(encoded, 71))
-                q_list = np.log10(np.asarray(
-                    [np.transpose([iq, diq]) for iq in iq_list]))
+                yt = np.asarray(to_categorical(encoded, 64))
+                q_list = np.asarray(
+                    [np.transpose([np.log10(iq), np.log10(dq)]) for iq, dq in zip(iq_list,diq)])
                 yield q_list, yt
     conn.close()
 
@@ -205,10 +205,10 @@ def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
                         q_list.extend([t2 for i in xrange(templ[1])])
                         iq_list.extend(
                             ast.literal_eval(fd.readline().strip()))
-                        dqt = ast.literal_eval(fd.readline().strip())
-                        dq_list.extend([dqt for i in xrange(templ[1])])
-                        diqt = ast.literal_eval(fd.readline().strip())
-                        diq_list.extend([diqt for i in xrange(templ[1])])
+                        #dqt = ast.literal_eval(fd.readline().strip())
+                        #dq_list.extend([dqt for i in xrange(templ[1])])
+                        #diqt = ast.literal_eval(fd.readline().strip())
+                        #diq_list.extend([diqt for i in xrange(templ[1])])
                         nlines += templ[1]
                     if (n % 1000 == 0) and verbosity:
                         print("Read " + str(nlines) + " points.")
@@ -218,4 +218,4 @@ def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
         print(
             "Error: the type " + typef + " was not recognised. Valid types "
                                          "are 'aggr' and 'json'.")
-    return q_list, iq_list, y_list, dq_list, diq_list, nlines
+    return q_list, iq_list, y_list, nlines, #dq_list, diq_list, nlines
