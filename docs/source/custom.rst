@@ -36,12 +36,36 @@ The gen_models.sh script is short:
   PYOPENCL_CTX=2; export PYOPENCL_CTX
   python -m sasmodels.generate_sets $*
 
-It first sets the location of sasview, bumps and periodictable, which are used in generating data for models (lines 2 through 5).
+It first sets the location of SASView, bumps and periodictable, which are used in generating data for models (lines 2 through 5).
 It then enables pyopencl compiler output, which will print out warnings when compiling models for the CPU.
 With CTX, this selects a OpenCL device to compute on. This is an index from ::
 
   pyopencl.create_some_context()
 
-The exact number can be deterimed by running this command in a Python shell. The Intel CPU is typically 0, the Intel GPU 1, and the discrete unit (AMD or Nvidia) 2.
+The exact number can be determined by running this command in a Python shell. The Intel CPU is typically 0, the Intel GPU 1, and the discrete unit (AMD or Nvidia) 2.
 It is recommended that you use the discrete GPU if possible, as it is many times faster than the CPU/integrated graphics.
-It is known that some models are broken on certain hardware devices. If a model fails to produce data with "Maths error, bad model", try forcing SASmodels to build using a different device, if you have one.
+It is known that some models are broken on certain hardware devices. If a model fails to produce data with "Maths error, bad model", try forcing SASModels to build using a different device, if you have one.
+
+An example call to gen_models for training would be ::
+
+  ./gen_models.sh all 15000 1D 100 mono double
+
+These results are saved (by default) to a PostgreSQL table named "train_data" in a database named "sas_data", with the username and password "sasnets". train_data's schema is:
+
+====== ====
+Column Type
+------ ----
+id     integer
+iq     numeric[]
+diq    numeric[]
+model  text
+
+We recommend at least 10,000 data points per model for training a neural network for research, and at least 20,000 to 25,000 for production systems. With 15,000 points per model, an epoch with batch size 5 on approximately 800,000 points takes approximately 450 seconds to run.
+During training, you can optionally specify evaluation data, which gives more accurate statistics on the model than using training data would. Changing line 188 to
+
+.. code-block:: python
+  :linenos:
+
+  "INSERT INTO eval_data (iq, diq, model)....
+
+And rerunning the script will randomly generate data and put it in the eval_data table, which has the same columns as the train_data table. We recommend 2500 evaluation points per model.

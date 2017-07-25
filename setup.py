@@ -8,4 +8,3 @@ setup(
         author_email='wangch00@icloud.com',
         packages=['sasnets',],
         )
-

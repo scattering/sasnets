@@ -22,8 +22,9 @@ gpattern = ""
 
 try: # Python 3 compatability
     xrange(1)
-except:
-    xrange = range
+    nrange = xrange
+except NameError:
+    nrange = range
 
 
 def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1",
@@ -103,7 +104,7 @@ def read_parallel_1d(path, pattern='_eval_', typef='aggr'):
         nlines = 0
         l = 0
         fn = os.listdir(path)
-        chunked = [fn[i: i + 1] for i in xrange(0, len(fn), 1)]
+        chunked = [fn[i: i + 1] for i in nrange(0, len(fn), 1)]
         pool = multiprocessing.Pool(multiprocessing.cpu_count() - 6,
                                     maxtasksperchild=2)
         result = np.asarray(
@@ -200,7 +201,7 @@ def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
                     with open(path + fn, 'r') as fd:
                         print("Reading " + fn)
                         templ = ast.literal_eval(fd.readline().strip())
-                        y_list.extend([templ[0] for i in xrange(templ[1])])
+                        y_list.extend([templ[0] for i in nrange(templ[1])])
                         t2 = ast.literal_eval(fd.readline().strip())
                         q_list.extend([t2 for i in xrange(templ[1])])
                         iq_list.extend(

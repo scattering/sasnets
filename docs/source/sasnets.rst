@@ -3,61 +3,43 @@ sasnets package
 
 Submodules
 ----------
-None yet.
 
-sasnets.analysis module
------------------------
+sasnets\.analysis module
+------------------------
 
 .. automodule:: sasnets.analysis
     :members:
     :undoc-members:
     :show-inheritance:
 
-sasnets.hyp module
-------------------
-This module is used for hyperas hyperoptimisation. Hyperas does not support code comments at this moment.
+sasnets\.hyp module
+-------------------
 
 .. automodule:: sasnets.hyp
     :members:
     :undoc-members:
     :show-inheritance:
 
-sasnets.p2sql module
---------------------
+sasnets\.logsql module
+----------------------
 
-.. automodule:: sasnets.p2sql
+.. automodule:: sasnets.logsql
     :members:
     :undoc-members:
     :show-inheritance:
 
-sasnets.rnames module
----------------------
-
-.. automodule:: sasnets.rnames
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
-sasnets.sas_io module
----------------------
+sasnets\.sas\_io module
+-----------------------
 
 .. automodule:: sasnets.sas_io
     :members:
     :undoc-members:
     :show-inheritance:
 
-sasnets.sasnet module
----------------------
+sasnets\.sasnet module
+----------------------
 
 .. automodule:: sasnets.sasnet
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
-sasnets.tosql module
---------------------
-
-.. automodule:: sasnets.tosql
     :members:
     :undoc-members:
     :show-inheritance:

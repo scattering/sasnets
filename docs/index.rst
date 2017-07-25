@@ -14,12 +14,5 @@ Contents:
    overview
    source/install
    source/sasnets
+   source/util
    source/custom
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
