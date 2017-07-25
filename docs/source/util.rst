@@ -4,6 +4,14 @@ util package
 Submodules
 ----------
 
+util\.logsql module
+-------------------
+
+.. automodule:: util.logsql
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 util\.p2sql module
 ------------------
 

@@ -16,7 +16,7 @@ import sys
 db = "/home/chwang/sql/data.db"
 parser = argparse.ArgumentParser()
 parser.add_argument("key", help="DB Table identifier")
-parser.add_argument("-c", "--create", help="Create new db", action="store_true")
+parser.add_argument("-c", "--create", help="Create new table", action="store_true")
 parser.add_argument("path", help="Relative or absolute path to a folder "
                                  "containing data files")
 
@@ -24,7 +24,9 @@ parser.add_argument("path", help="Relative or absolute path to a folder "
 # noinspection SqlNoDataSourceInspection
 def main(args):
     """
-    Main method. args come from system command line; should conform to argparse arguments.
+    Main method. args come from system command line; should conform to argparse
+    arguments.
+
     :param args: Command line args
     :return: None
     """
@@ -39,11 +41,11 @@ def main(args):
     path = parsed.path
     nlines = 0
     pattern = re.compile("all")
-    q_list, iq_list, y_list = (list() for i in range(3))
     for fn in sorted(os.listdir(path)):
         if pattern.search(fn):
             try:
                 with open(path + fn, 'r') as fd:
+                    q_list, iq_list, y_list = (list() for i in range(3))
                     print("Reading " + fn)
                     templ = ast.literal_eval(fd.readline().strip())
                     y_list.extend([templ[0] for i in range(templ[1])])
@@ -52,13 +54,17 @@ def main(args):
                     iq_list.extend(ast.literal_eval(fd.readline().strip()))
                     nlines += templ[1]
                     for q, iq, y in zip(q_list, iq_list, y_list):
-                        z = "INSERT INTO data_" + parsed.key + " VALUES ('" + str(
-                            y) + "', " + str(len(q)) + ", '" + str(
-                            q) + "', '" + str(iq) + "')"
+                        z = "INSERT INTO data_" + parsed.key + " VALUES ('" + \
+                            str(y) + "', " + str(len(q)) + ", '" + str(q) + \
+                            "', '" + str(iq) + "')"
                         c.execute(z)
-                        conn.commit()
-            except:
+            except Exception:
+                c.close()
+                conn.close()
                 raise
+    conn.commit()
+    c.close()
+    conn.close()
 
 
 if __name__ == "__main__":

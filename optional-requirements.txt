@@ -1,2 +1,0 @@
-Sphinx>=1.3.6
-ruamel.yaml>=0.15

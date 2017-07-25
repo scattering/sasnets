@@ -25,6 +25,7 @@ parser.add_argument("path", help="Relative or absolute path to a folder "
 def main(args):
     """
     Main function. Args should conform to the argparse args specified.
+
     :param args: Arguments from the command line
     :return: None
     """

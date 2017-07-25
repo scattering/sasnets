@@ -7,26 +7,30 @@ to Theano or CNTK through the Keras config file.
 """
 from __future__ import print_function
 
+# System imports
 import argparse
 import logging
 import os
 import sys
-import time
 
+# Installed packages
 import keras
 import matplotlib.pyplot as plt
 import numpy as np
 import psycopg2 as psql
 from keras.callbacks import TensorBoard, EarlyStopping
-from keras.layers import Conv1D, Dropout, Flatten, Dense, \
-    Embedding, MaxPooling1D
+from keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
+    MaxPooling1D
 from keras.models import Sequential
 from keras.utils.np_utils import to_categorical
 from psycopg2 import sql
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
+# SASNets packages
 from sas_io import sql_dat_gen
+# Define the argparser parameters
+from sasnets.util.util import inepath
 
 parser = argparse.ArgumentParser(
     description="Use neural nets to classify scattering data.")
@@ -37,18 +41,18 @@ parser.add_argument("-v", "--verbose", help="Control output verbosity",
 parser.add_argument("-s", "--save-path",
                     help="Path to save model weights and info to")
 
-
+# Convert PostgreSQL floats to actual floats rather than Decimal()s
 DEC2FLOAT = psql.extensions.new_type(
-     psql._psycopg.DECIMAL.values,
-     'DEC2FLOAT',
-     lambda value, curs: float(value) if value is not None else None)
+    psql._psycopg.DECIMAL.values,
+    'DEC2FLOAT',
+    lambda value, curs: float(value) if value is not None else None)
 psql.extensions.register_type(DEC2FLOAT, None)
 
 
 def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
             yval=None):
     """
-    A oned convnet that uses a generator reading from a Postgres database
+    A 1D convnet that uses a generator reading from a Postgres database
     instead of loading all files into memory at once.
 
     :param dn: The data table name.
@@ -64,21 +68,15 @@ def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
         v = 1
     else:
         v = 0
-    base = None
-    sp = os.path.normpath(save_path)
-    if sp is not None:
-        if os.path.isdir(sp):
-            base = os.path.join(sp, str(time.time()))
-        else:
-            base = sp
-        if not os.path.exists(os.path.dirname(sp)):
-            os.makedirs(os.path.dirname(sp))
+    base = inepath(save_path)
+
     tb = TensorBoard(log_dir=os.path.dirname(base), histogram_freq=1)
     es = EarlyStopping(min_delta=0.001, patience=15, verbose=v)
 
     # Begin model definitions
     model = Sequential()
-    model.add(Conv1D(256, kernel_size=8, activation='relu', input_shape=[267,2]))
+    model.add(
+        Conv1D(256, kernel_size=8, activation='relu', input_shape=[267, 2]))
     model.add(MaxPooling1D(pool_size=4))
     model.add(Dropout(.17676))
     model.add(Conv1D(256, kernel_size=6, activation='relu'))
@@ -99,7 +97,6 @@ def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
                                   epochs=60, workers=1, verbose=v,
                                   validation_data=(xval, yval),
                                   max_queue_size=1, callbacks=[tb, es])
-    score = None
 
     # Model Save
     plt.plot(history.history['acc'])
@@ -108,36 +105,21 @@ def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
     plt.ylabel('accuracy')
     plt.xlabel('epoch')
     plt.legend(['train', 'test'], loc='upper left')
+
+    score = None
     if not (base is None):
+        model.save(base + ".h5")
+        if xval is not None and yval is not None:
+            score = model.evaluate(xval, yval, verbose=v)
+            print('\nTest loss: ', score[0])
+            print('Test accuracy:', score[1])
         with open(base + ".history", 'w') as fd:
             fd.write(str(history.history) + "\n")
             if score is not None:
                 fd.write(str(score) + "\n")
-        model.save(base + ".h5")
         with open(base + ".svg", 'w') as fd:
             plt.savefig(fd, format='svg', bbox_inches='tight')
-    if xval is not None and yval is not None:
-        score = model.evaluate(xval, yval, verbose=v)
-        print('\nTest loss: ', score[0])
-        print('Test accuracy:', score[1])
     logging.info("Complete.")
-
-
-def plot(q, i_q):
-    """
-    Method to plot Q vs I(Q) data for testing and verification purposes.
-
-    :param q: List of Q values
-    :param i_q: List of I values
-    :return: None
-    """
-    plt.style.use("classic")
-    plt.plot(q, i_q)
-    ax = plt.gca()
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.autoscale(enable=True)
-    plt.show()
 
 
 def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
@@ -158,15 +140,8 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
         v = 1
     else:
         v = 0
-    base = None
-    sp = os.path.normpath(save_path)
-    if sp is not None:
-        if os.path.isdir(sp):
-            base = os.path.join(sp, str(time.time()))
-        else:
-            base = sp
-        if not os.path.exists(os.path.dirname(sp)):
-            os.makedirs(os.path.dirname(sp))
+    base = inepath(save_path)
+
     encoder = LabelEncoder()
     encoder.fit(y)
     encoded = encoder.transform(y)
@@ -176,6 +151,7 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     if not len(set(y)) == len(set(yevl)):
         raise ValueError("Differing number of categories in train (" + str(
             len(set(y))) + ") and test (" + str(len(set(yevl))) + ") data.")
+
     tb = TensorBoard(log_dir=os.path.dirname(base), histogram_freq=1)
     es = EarlyStopping(min_delta=0.005, patience=5, verbose=v)
 
@@ -198,7 +174,6 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
         l = 'categorical_crossentropy'
     model.compile(loss=l, optimizer=keras.optimizers.Adadelta(),
                   metrics=['accuracy'])
-    # plot_model(model, to_file="model.png")
 
     # Model Run
     if v:
@@ -265,7 +240,7 @@ def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
                   metrics=['accuracy'])
     print(model.summary())
     model.fit(xval, yval, batch_size=10, epochs=10, verbose=1,
-                        validation_data=(xtest, ytest))
+              validation_data=(xtest, ytest))
     if xevl and yevl:
         score = model.evaluate(xtest, ytest, verbose=0)
         print('Test loss: ', score[0])
@@ -300,55 +275,28 @@ def main(args):
             c.execute("SELECT model FROM new_train_data;")
             xt = set(c.fetchall())
             y = [i[0] for i in xt]
-            #c.execute("SELECT model FROM new_eval_data;")
-            #xt = set(c.fetchall())
-            #y2 = set([i[0] for i in xt])
-            #z=['adsorbed_layer', 'barbell', 'bcc_paracrystal',
-             #'be_polyelectrolyte', 'binary_hard_sphere', 'broad_peak',
-             #'capped_cylinder', 'core_multi_shell', 'core_shell_bicelle',
-             #'core_shell_bicelle_elliptical', 'core_shell_cylinder',
-             #'core_shell_ellipsoid', 'core_shell_parallelepiped',
-             #'core_shell_sphere', 'correlation_length', 'cylinder', 'dab',
-             #'ellipsoid', 'elliptical_cylinder', 'flexible_cylinder',
-             #'flexible_cylinder_elliptical', 'fractal', 'fractal_core_shell',
-             #'fuzzy_sphere', 'gauss_lorentz_gel', 'gaussian_peak', 'gel_fit',
-             #'guinier', 'guinier_porod', 'hardsphere', 'hayter_msa',
-             #'hollow_cylinder', 'hollow_rectangular_prism',
-             #'hollow_rectangular_prism_thin_walls', 'lamellar', 'lamellar_hg',
-             #'lamellar_hg_stack_caille', 'lamellar_stack_caille',
-             #'lamellar_stack_paracrystal', 'line', 'linear_pearls', 'lorentz',
-             #'mass_fractal', 'mass_surface_fractal', 'mono_gauss_coil',
-             #'multilayer_vesicle', 'onion', 'parallelepiped', 'peak_lorentz',
-             #'pearl_necklace', 'poly_gauss_coil', 'polymer_excl_volume',
-             #'polymer_micelle', 'porod', 'power_law', 'pringle', 'raspberry',
-             #'rectangular_prism', 'rpa', 'sphere', 'spherical_sld', 'spinodal',
-             #'squarewell', 'stacked_disks', 'star_polymer', 'stickyhardsphere',
-             #'surface_fractal', 'teubner_strey', 'triaxial_ellipsoid',
-            # 'two_lorentzian', 'two_power_law', 'unified_power_Rg', 'vesicle']
             encoder = LabelEncoder()
             encoder.fit(y)
-            #for m in z:
-             #   if(not y.__contains__(m)):
-              #      print(m)
-            c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows")
-            #c.execute(
+            c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows;")
+            # c.execute(
             #        sql.SQL("SELECT * FROM {}").format(
             #            sql.Identifier("train_metadata")))
-            #x = np.asarray(c.fetchall())
+            # x = np.asarray(c.fetchall())
             # q = x[0][1]
             # dq = x[0][2]
-            #diq = x[0][3]
+            # diq = x[0][3]
             c.execute(sql.SQL(
-                "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(10000)").format(
-                            sql.Identifier("new_eval_data")))
+                "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(10000);").format(
+                sql.Identifier("new_eval_data")))
             x = np.asarray(c.fetchall())
             iq_list = x[:, 1]
-            diq = x[:,2]
+            diq = x[:, 2]
             y_list = x[:, 3]
             encoded = encoder.transform(y_list)
             yt = np.asarray(to_categorical(encoded, 64))
-            q_list = np.asarray([np.transpose([np.log10(iq), np.log10(dq)]) for iq, dq in
-                                 zip(iq_list, diq)])
+            q_list = np.asarray(
+                [np.transpose([np.log10(iq), np.log10(dq)]) for iq, dq in
+                 zip(iq_list, diq)])
 
     sql_net("new_train_data", "new_train_metadata",
             verbosity=parsed.verbose, save_path=parsed.save_path,

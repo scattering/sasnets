@@ -20,14 +20,6 @@ sasnets\.hyp module
     :undoc-members:
     :show-inheritance:
 
-sasnets\.logsql module
-----------------------
-
-.. automodule:: sasnets.logsql
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
 sasnets\.sas\_io module
 -----------------------
 

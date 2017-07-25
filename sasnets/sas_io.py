@@ -20,7 +20,7 @@ from psycopg2 import sql
 gpath = ""
 gpattern = ""
 
-try: # Python 3 compatability
+try:  # Python 3 compatibility
     xrange(1)
     nrange = xrange
 except NameError:
@@ -30,8 +30,8 @@ except NameError:
 def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1",
                 user="sasnets", encoder=None):
     """
-    A pythonic generator that gets its data from a PostgreSQL database. Yields a
-    (q, iq, dq, diq) list and a label list.
+    A Pythonic generator that gets its data from a PostgreSQL database. Yields a
+    (iq, diq) list and a label list.
 
     :param dname: The data table name to connect to.
     :param mname: The metadata table name to connect to.
@@ -48,7 +48,7 @@ def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1",
             c.execute(
                 sql.SQL("SELECT * FROM {}").format(
                     sql.Identifier(mname)))
-            x = np.asarray(c.fetchall())
+            # x = np.asarray(c.fetchall())
             # pprint(x)
             while True:
                 c.execute(
@@ -57,19 +57,19 @@ def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1",
                         sql.Identifier(dname)))
                 x = np.asarray(c.fetchall())
                 iq_list = x[:, 1]
-                diq = x[:,2]
+                diq = x[:, 2]
                 y_list = x[:, 3]
                 encoded = encoder.transform(y_list)
                 yt = np.asarray(to_categorical(encoded, 64))
                 q_list = np.asarray(
-                    [np.transpose([np.log10(iq), np.log10(dq)]) for iq, dq in zip(iq_list,diq)])
+                    [np.transpose([np.log10(iq), np.log10(dq)]) for iq, dq in
+                     zip(iq_list, diq)])
                 yield q_list, yt
     conn.close()
 
-    # noinspection PyUnusedLocal
 
-
-def read_parallel_1d(path, pattern='_eval_', typef='aggr'):
+# noinspection PyUnusedLocal
+def read_parallel_1d(path, pattern='_eval_'):
     """
     Reads all files in the folder path. Opens the files whose names match the
     regex pattern. Returns lists of Q, I(Q), and ID. Path can be a
@@ -83,45 +83,34 @@ def read_parallel_1d(path, pattern='_eval_', typef='aggr'):
     file reading threads. Sequential peaks at around 7 to 10 GB. Use at your own
     risk. Be prepared to kill the threads and/or press the reset button.
 
-    typef is one of 'json' or 'aggr'. JSON mode reads in all and only json files
-    in the folder specified by path. aggr mode reads in aggregated data files.
-    See sasmodels/generate_sets.py for more about these formats.
-
     Assumes files contain 1D data.
 
     :param path: Path to the directory of files to read from.
     :param pattern: A regex. Only files matching this regex are opened.
-    :param typef: Type of file to read (aggregate data or json data).
-    :param verbosity: Controls the verbosity of output.
     """
     global gpath
     global gpattern
     # q_list, iq_list, y_list = (list() for i in range(3))
     # pattern = re.compile(pattern)
-    if typef == 'aggr':
-        gpattern = pattern
-        gpath = path
-        nlines = 0
-        l = 0
-        fn = os.listdir(path)
-        chunked = [fn[i: i + 1] for i in nrange(0, len(fn), 1)]
-        pool = multiprocessing.Pool(multiprocessing.cpu_count() - 6,
-                                    maxtasksperchild=2)
-        result = np.asarray(
-            pool.map(read_h, chunked, chunksize=1))
-        pool.close()
-        pool.join()
-        logging.info("IO Done")
-        result = list(itertools.chain.from_iterable(result))
-        q_list = result[0::3]
-        iq_list = result[1::3]
-        y_list = result[2::3]
-    else:
-        print(
-            "Error: the type " + typef + " was not recognised. Valid types "
-                                         "are 'aggr' and 'json'.")
-        return None
-    return q_list, iq_list, y_list, nlines
+
+    gpattern = pattern
+    gpath = path
+    nlines = 0
+    l = 0
+    fn = os.listdir(path)
+    chunked = [fn[i: i + 1] for i in nrange(0, len(fn), 1)]
+    pool = multiprocessing.Pool(multiprocessing.cpu_count() / 2,
+                                maxtasksperchild=2)
+    result = np.asarray(
+        pool.map(read_h, chunked, chunksize=1))
+    pool.close()
+    pool.join()
+    logging.info("IO Done")
+    result = list(itertools.chain.from_iterable(result))
+    q_list = result[0::3]
+    iq_list = result[1::3]
+    y_list = result[2::3]
+    return q_list, iq_list, y_list, nlines  # noinspection PyUnusedLocal
 
 
 def read_h(l):
@@ -134,9 +123,9 @@ def read_h(l):
     logging.info(os.getpid())
     if l is None:
         raise Exception("Empty args")
-    global gpath # Abuse globals because pool only passes one argument
+    global gpath  # Abuse globals because pool only passes one argument
     global gpattern
-    q_list, iq_list, y_list = (list() for i in range(3))
+    q_list, iq_list, y_list = (list() for i in nrange(3))
     p = re.compile(gpattern)
     for fn in l:
         if p.search(fn):
@@ -144,17 +133,16 @@ def read_h(l):
                 with open(gpath + fn, 'r') as fd:
                     logging.info("Reading " + fn)
                     templ = ast.literal_eval(fd.readline().strip())
-                    y_list.extend([templ[0] for i in range(templ[1])])
+                    y_list.extend([templ[0] for i in nrange(templ[1])])
                     t2 = ast.literal_eval(fd.readline().strip())
-                    q_list.extend([t2 for i in range(templ[1])])
+                    q_list.extend([t2 for i in nrange(templ[1])])
                     iq_list.extend(ast.literal_eval(fd.readline().strip()))
             except Exception as e:
-                logging.warning("skipped, " + str(e))
+                logging.warning("skipped" + fn + ", " + str(e))
     return q_list, iq_list, y_list
 
-    # noinspection PyCompatibility,PyUnusedLocal
 
-
+# noinspection PyCompatibility,PyUnusedLocal
 def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
     """
     Reads all files in the folder path. Opens the files whose names match the
@@ -173,14 +161,15 @@ def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
     :param typef: Type of file to read (aggregate data or json data).
     :param verbosity: Controls the verbosity of output.
     """
-    q_list, dq_list, iq_list, diq_list, y_list = (list() for i in range(5))
+    q_list, iq_list, y_list, = (list() for i in nrange(3))
+    # dq_list, iq_list, diq_list, y_list = (list() for i in nrange(5))
     pattern = re.compile(pattern)
     n = 0
     nlines = None
     if typef == 'json':
         try:
-            from ruamel.yaml import \
-                safe_load  # using ruamel for better input processing.
+            from ruamel.yaml import safe_load
+            # ruamel has better json input processing.
         except ImportError:
             from json import loads as safe_load
         for fn in os.listdir(path):
@@ -203,20 +192,25 @@ def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
                         templ = ast.literal_eval(fd.readline().strip())
                         y_list.extend([templ[0] for i in nrange(templ[1])])
                         t2 = ast.literal_eval(fd.readline().strip())
-                        q_list.extend([t2 for i in xrange(templ[1])])
+                        q_list.extend([t2 for i in nrange(templ[1])])
                         iq_list.extend(
                             ast.literal_eval(fd.readline().strip()))
-                        #dqt = ast.literal_eval(fd.readline().strip())
-                        #dq_list.extend([dqt for i in xrange(templ[1])])
-                        #diqt = ast.literal_eval(fd.readline().strip())
-                        #diq_list.extend([diqt for i in xrange(templ[1])])
+                        # dqt = ast.literal_eval(fd.readline().strip())
+                        # dq_list.extend([dqt for i in xrange(templ[1])])
+                        # diqt = ast.literal_eval(fd.readline().strip())
+                        # diq_list.extend([diqt for i in xrange(templ[1])])
                         nlines += templ[1]
                     if (n % 1000 == 0) and verbosity:
                         print("Read " + str(nlines) + " points.")
                 except Exception as e:
-                    logging.warning("skipped, " + str(e))
+                    logging.warning("skipped " + fn + ", " + str(e))
     else:
         print(
             "Error: the type " + typef + " was not recognised. Valid types "
                                          "are 'aggr' and 'json'.")
-    return q_list, iq_list, y_list, nlines, #dq_list, diq_list, nlines
+    return q_list, iq_list, y_list, nlines,  # dq_list, diq_list, nlines
+
+
+if __name__ == '__main__':
+    raise NotImplementedError("Cannot run sas_io as main. Import a specific "
+                              "function instead.")

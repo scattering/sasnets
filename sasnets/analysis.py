@@ -16,7 +16,6 @@ import keras
 import matplotlib.pyplot as plt
 import numpy as np
 import psycopg2 as psql
-import seaborn as sns
 from keras.utils import to_categorical
 from pandas import factorize
 from psycopg2 import sql
@@ -43,6 +42,7 @@ parser.add_argument("-p", "--pattern",
 def load_from(path):
     """
     Loads a model from the specified path.
+
     :param path: Relative or absolute path to the .h5 model file
     :return: The loaded model.
     """
@@ -105,7 +105,7 @@ def predict(model, x, names, num=5):
         sys.stdout.write("\n")
 
 
-def cpredict(model, x, l=69, pl=5000):
+def cpredict(model, x, l=71, pl=5000):
     """
     Runs a Keras model to create a confusion matrix.
 
@@ -115,7 +115,7 @@ def cpredict(model, x, l=69, pl=5000):
     :param pl: The number of data iterations per model.
     :return: A confusion matrix of percentages
     """
-    res = np.zeros([71, 71])
+    res = np.zeros([l, l])
     row = 0
     c = 0
     prob = model.predict(x, verbose=1)
@@ -167,13 +167,21 @@ def tcluster(model, x, names):
     :param names: List of all model names.
     :return: The tSNE object that was plotted.
     """
+    try:
+        import seaborn as sns
+    except ImportError:
+        sns = None
+        pass
     xt = random.sample(x, 5000)
     arr = rpredict(model, xt, names)
-    p = np.array(sns.color_palette("hls", 69))
     t = TSNE(n_components=2, verbose=2)
     classx = t.fit_transform(xt)
-    plt.scatter(classx[:, 0], classx[:, 1],
-                c=p[np.asarray(factorize(arr)[0]).astype(np.int)])
+    if sns is not None:
+        p = np.array(sns.color_palette("hls", 69))
+        plt.scatter(classx[:, 0], classx[:, 1],
+                    c=p[np.asarray(factorize(arr)[0]).astype(np.int)])
+    else:
+        plt.scatter(classx[:, 0], classx[:, 1])
     plt.show()
     return classx
 
