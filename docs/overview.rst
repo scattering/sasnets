@@ -26,6 +26,16 @@ Results
 
 SASNets has been able to achieve a prediction accuracy of between 40% and 50% on the 71 model set. We also demonstrate that the network is able to distinguish superclusters or types of models, for example cylinders or spheres.
 
+More Information
+----------------
+
+For a more in-depth exploration of this project, please see :download:`this poster <source/SASNets.pdf>` or :download:`this presentation <source/classifying-sans-data.pdf>`.
+
+License
+-------
+
+The poster, presentation, and this documentation are released under the CC-BY-SA 4.0 license. The codebase of SASNets is released under the BSD 3-clause license.
+
 Contact
 -------
 Chris Wang was the main author of the program, and can be reached at com *period* icloud *asperand* chrwang0, backwards.
@@ -37,7 +47,7 @@ Acknowledgements
 ----------------
 This project benefited from the NSF-funded DANSE Project, DMR-0520547, SANS Subproject from the University of Tennessee Knoxville.
 
-This project benefited from funding and material support from the NIST Center for Neutron Research and the NSF-funded CHRNS.
+This project benefited from funding and material support from the NIST Centre for Neutron Research and the NSF-funded CHRNS.
 
 SASView and SASModels were developed by an international team as part of the NSF-funded DANSE project. Their work can be found at https://github.com/sasview. The custom fork of SASModels used in this program can be found at https://github.com/chrwang/sasmodels.
 

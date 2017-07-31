@@ -171,7 +171,6 @@ def tcluster(model, x, names):
         import seaborn as sns
     except ImportError:
         sns = None
-        pass
     xt = random.sample(x, 5000)
     arr = rpredict(model, xt, names)
     t = TSNE(n_components=2, verbose=2)

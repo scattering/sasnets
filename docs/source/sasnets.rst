@@ -1,6 +1,13 @@
 sasnets package
 ===============
 
+Subpackages
+-----------
+
+.. toctree::
+
+    sasnets.util
+
 Submodules
 ----------
 
