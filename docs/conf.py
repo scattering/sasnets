@@ -14,6 +14,7 @@
 
 import sys
 import os
+from mock import Mock as MagicMock
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
@@ -28,6 +29,16 @@ sys.path.insert(0, os.path.abspath('../sasnets/util/'))
 #sys.path.append('/usr/lib/python2.7/site-packages/')
 #sys.path.append('/home/chwang/builds/')
 #os.system("source ~/svenv/bin/activate")
+
+
+class Mock(MagicMock):
+    @classmethod
+    def __getattr__(cls, name):
+            return MagicMock()
+
+MOCK_MODULES = ['matplotlib.pyplot']
+sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
+
 
 # -- General configuration ------------------------------------------------
 
