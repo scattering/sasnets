@@ -30,7 +30,7 @@ from sklearn.preprocessing import LabelEncoder
 # SASNets packages
 from sas_io import sql_dat_gen
 # Define the argparser parameters
-from sasnets.util.util import inepath
+from sasnets.util.utils import inepath
 
 parser = argparse.ArgumentParser(
     description="Use neural nets to classify scattering data.")

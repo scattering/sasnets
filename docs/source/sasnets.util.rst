@@ -36,10 +36,10 @@ sasnets\.util\.tosql module
     :undoc-members:
     :show-inheritance:
 
-sasnets\.util\.util module
+sasnets\.util\.utils module
 --------------------------
 
-.. automodule:: sasnets.util.util
+.. automodule:: sasnets.util.utils
     :members:
     :undoc-members:
     :show-inheritance:
