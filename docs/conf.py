@@ -20,6 +20,7 @@ import os
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 sys.path.append(os.path.abspath('../../'))
 sys.path.append(os.path.abspath('../'))
+sys.path.append(os.path.abspath('../sasnets/'))
 #sys.path.append('/home/chwang/svenv/lib/python2.7/site-packages/')
 #sys.path.append('/home/chwang/svenv/lib/python2.7/dist-packages/')
 #sys.path.append('/usr/lib/python2.7/dist-packages/')

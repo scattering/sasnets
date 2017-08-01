@@ -37,7 +37,7 @@ sasnets\.util\.tosql module
     :show-inheritance:
 
 sasnets\.util\.utils module
---------------------------
+---------------------------
 
 .. automodule:: sasnets.util.utils
     :members:
