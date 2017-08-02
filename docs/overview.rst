@@ -31,6 +31,8 @@ More Information
 
 For a more in-depth exploration of this project, please see :download:`this poster <source/SASNets.pdf>` or :download:`this presentation <source/classifying-sans-data.pdf>`.
 
+A full size version of the dendrogram can be found :download:`here <source/dendrogram.pdf`.  
+
 License
 -------
 
