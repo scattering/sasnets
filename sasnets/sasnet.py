@@ -33,6 +33,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from sas_io import sql_dat_gen, read_seq_1d
 # Define the argparser parameters
 from util.util import inepath
+from sasnets.util.utils import inepath
 
 parser = argparse.ArgumentParser(
     description="Use neural nets to classify scattering data.")

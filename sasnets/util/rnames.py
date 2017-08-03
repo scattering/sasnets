@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import os
 import re
+import ast
 
 import sys
 
@@ -24,7 +25,7 @@ def rnames(path, p="_all_"):
             try:
                 with open(path + fn, 'r') as fd:
                     print("Reading " + fn)
-                    templ = eval(fd.readline().strip())
+                    templ = ast.literal_eval(fd.readline().strip())
                     l.append(templ[0])
             except:
                 raise

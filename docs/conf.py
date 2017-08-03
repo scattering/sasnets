@@ -14,18 +14,31 @@
 
 import sys
 import os
+from mock import Mock as MagicMock
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
-sys.path.append(os.path.abspath('../../'))
-sys.path.append(os.path.abspath('../'))
+sys.path.insert(0, os.path.abspath('../../'))
+sys.path.insert(0, os.path.abspath('../'))
+sys.path.insert(0, os.path.abspath('../sasnets/'))
+sys.path.insert(0, os.path.abspath('../sasnets/util/'))
 #sys.path.append('/home/chwang/svenv/lib/python2.7/site-packages/')
 #sys.path.append('/home/chwang/svenv/lib/python2.7/dist-packages/')
 #sys.path.append('/usr/lib/python2.7/dist-packages/')
 #sys.path.append('/usr/lib/python2.7/site-packages/')
 #sys.path.append('/home/chwang/builds/')
 #os.system("source ~/svenv/bin/activate")
+
+
+class Mock(MagicMock):
+    @classmethod
+    def __getattr__(cls, name):
+            return MagicMock()
+
+MOCK_MODULES = ['pyplot']
+sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
+
 
 # -- General configuration ------------------------------------------------
 

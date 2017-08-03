@@ -14,5 +14,5 @@ Contents:
    overview
    source/install
    source/sasnets
-   source/util
+   source/sasnets.util
    source/custom
