@@ -19,6 +19,7 @@ import psycopg2 as psql
 from keras.utils import to_categorical
 from pandas import factorize
 from psycopg2 import sql
+from sasnets.sas_io import read_seq_1d
 from scipy.cluster.hierarchy import linkage, dendrogram
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import LabelEncoder
@@ -215,41 +216,41 @@ def main(args):
     with open(os.path.join(os.path.dirname(parsed.data_path), "name"),
               'r') as fd:
         n = ast.literal_eval(fd.readline().strip())
-        # q, iq, y, dq, diq, nlines = read_seq_1d(parsed.data_path,
-        # pattern=parsed.pattern,
-        # verbosity=parsed.verbose)
-    conn = psql.connect("dbname=sas_data user=sasnets host=127.0.0.1")
-    # conn.set_session(readonly=True)
-    with conn:
-        with conn.cursor() as c:
-            c.execute("SELECT model FROM train_data;")
-            xt = set(c.fetchall())
-            y = [i[0] for i in xt]
-            encoder = LabelEncoder()
-            encoder.fit(y)
-
-            c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows")
-            c.execute(
-                sql.SQL("SELECT * FROM {}").format(
-                    sql.Identifier("train_metadata")))
-            x = np.asarray(c.fetchall())
-            q = x[0][1]
-            dq = x[0][2]
-            diq = x[0][3]
-            c.execute(sql.SQL(
-                "SELECT * FROM {}").format(
-                sql.Identifier("eval_data")))
-            x = np.asarray(c.fetchall())
-            iq_list = x[:, 1]
-            y_list = x[:, 2]
-            encoded = encoder.transform(y_list)
-            yt = np.asarray(to_categorical(encoded, 71))
-            q_list = np.asarray([np.transpose([q, iq, dq, diq]) for iq in
-                                 iq_list])
+        q, iq, y, dq, diq, nlines = read_seq_1d(parsed.data_path,
+        pattern=parsed.pattern,
+        verbosity=parsed.verbose)
+    # conn = psql.connect("dbname=sas_data user=sasnets host=127.0.0.1")
+    # # conn.set_session(readonly=True)
+    # with conn:
+    #     with conn.cursor() as c:
+    #         c.execute("SELECT model FROM train_data;")
+    #         xt = set(c.fetchall())
+    #         y = [i[0] for i in xt]
+    #         encoder = LabelEncoder()
+    #         encoder.fit(y)
+    #
+    #         c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows")
+    #         c.execute(
+    #             sql.SQL("SELECT * FROM {}").format(
+    #                 sql.Identifier("train_metadata")))
+    #         x = np.asarray(c.fetchall())
+    #         q = x[0][1]
+    #         dq = x[0][2]
+    #         diq = x[0][3]
+    #         c.execute(sql.SQL(
+    #             "SELECT * FROM {}").format(
+    #             sql.Identifier("eval_data")))
+    #         x = np.asarray(c.fetchall())
+    #         iq_list = x[:, 1]
+    #         y_list = x[:, 2]
+    #         encoded = encoder.transform(y_list)
+    #         yt = np.asarray(to_categorical(encoded, 71))
+    #         q_list = np.asarray([np.transpose([q, iq, dq, diq]) for iq in
+    #                              iq_list])
     model = load_from(parsed.model_file)
     if parsed.classify:
         # tcluster(model, b, n, c)
-        z = dcluster(model, q_list, n)
+        z = dcluster(model, iq, n)
         plt.pcolor(z, cmap='RdBu')
         plt.show()
     else:

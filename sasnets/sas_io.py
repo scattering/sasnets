@@ -190,20 +190,21 @@ def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
                     with open(path + fn, 'r') as fd:
                         print("Reading " + fn)
                         templ = ast.literal_eval(fd.readline().strip())
-                        y_list.extend([templ[0] for i in nrange(templ[1])])
+                        y_list.extend([templ[0] for i in nrange(10000)])
                         t2 = ast.literal_eval(fd.readline().strip())
-                        q_list.extend([t2 for i in nrange(templ[1])])
+                        q_list.extend([t2 for i in nrange(10000)])
                         iq_list.extend(
                             ast.literal_eval(fd.readline().strip()))
                         # dqt = ast.literal_eval(fd.readline().strip())
                         # dq_list.extend([dqt for i in xrange(templ[1])])
                         # diqt = ast.literal_eval(fd.readline().strip())
                         # diq_list.extend([diqt for i in xrange(templ[1])])
-                        nlines += templ[1]
+                        nlines += 10000
                     if (n % 1000 == 0) and verbosity:
                         print("Read " + str(nlines) + " points.")
                 except Exception as e:
                     logging.warning("skipped " + fn + ", " + str(e))
+                    # raise
     else:
         print(
             "Error: the type " + typef + " was not recognised. Valid types "

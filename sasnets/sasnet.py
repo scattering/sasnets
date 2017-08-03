@@ -18,6 +18,7 @@ import keras
 import matplotlib.pyplot as plt
 import numpy as np
 import psycopg2 as psql
+import time
 from keras.callbacks import TensorBoard, EarlyStopping
 from keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
     MaxPooling1D
@@ -27,10 +28,11 @@ from psycopg2 import sql
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 # SASNets packages
-from sas_io import sql_dat_gen
+from sas_io import sql_dat_gen, read_seq_1d
 # Define the argparser parameters
-from sasnets.util.util import inepath
+from util.util import inepath
 
 parser = argparse.ArgumentParser(
     description="Use neural nets to classify scattering data.")
@@ -148,9 +150,9 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     yt = to_categorical(encoded)
     xval, xtest, yval, ytest = train_test_split(x, yt, test_size=.25,
                                                 random_state=random_s)
-    if not len(set(y)) == len(set(yevl)):
-        raise ValueError("Differing number of categories in train (" + str(
-            len(set(y))) + ") and test (" + str(len(set(yevl))) + ") data.")
+    #if not len(set(y)) == len(set(yevl)):
+    #    raise ValueError("Differing number of categories in train (" + str(
+    #        len(set(y))) + ") and test (" + str(len(set(yevl))) + ") data.")
 
     tb = TensorBoard(log_dir=os.path.dirname(base), histogram_freq=1)
     es = EarlyStopping(min_delta=0.005, patience=5, verbose=v)
@@ -255,29 +257,30 @@ def main(args):
     :return: None.
     """
     parsed = parser.parse_args(args)
-    # time_start = time.clock()
-    # a, b, c, d, e, n = read_seq_1d(parsed.path, pattern='_all_',
-    #                               verbosity=parsed.verbose)
-    # gc.collect()
-    # at, bt, ct, dt, et, nt = read_seq_1d(parsed.path, pattern='_eval_',
+    time_start = time.clock()
+    a, b, c, n = read_seq_1d(parsed.path, pattern='_all_',
+                                   verbosity=parsed.verbose)
+     #gc.collect()
+     #at, bt, ct, dt, et, nt = read_seq_1d(parsed.path, pattern='_eval_',
     #                                     verbosity=parsed.verbose)
-    # time_end = time.clock() - time_start
-    # logging.info("File I/O Took " + str(time_end) + " seconds for " + str(n) +
-    #             " points of data.")
-    # r = random.randint(0, 2 ** 32 - 1)
-    # logging.warn("Random seed for this iter is " + str(r))
-    # oned_convnet(np.asarray(b), c, np.asarray(bt), ct, random_s=r,
-    #             verbosity=parsed.verbose, save_path=parsed.save_path)
-    conn = psql.connect("dbname=sas_data user=sasnets host=127.0.0.1")
+    time_end = time.clock() - time_start
+    logging.info("File I/O Took " + str(time_end) + " seconds for " + str(n) +
+                 " points of data.")
+    import random
+    r = random.randint(0, 2 ** 32 - 1)
+    logging.warn("Random seed for this iter is " + str(r))
+    oned_convnet(np.asarray(b), c, None, None, random_s=r,
+                 verbosity=parsed.verbose, save_path=parsed.save_path)
+    #conn = psql.connect("dbname=sas_data user=sasnets host=127.0.0.1")
     # conn.set_session(readonly=True)
-    with conn:
-        with conn.cursor() as c:
-            c.execute("SELECT model FROM new_train_data;")
-            xt = set(c.fetchall())
-            y = [i[0] for i in xt]
-            encoder = LabelEncoder()
-            encoder.fit(y)
-            c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows;")
+    #with conn:
+    #    with conn.cursor() as c:
+    #        c.execute("SELECT model FROM new_train_data;")
+    #        xt = set(c.fetchall())
+    #        y = [i[0] for i in xt]
+    #        encoder = LabelEncoder()
+    #        encoder.fit(y)
+    #        c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows;")
             # c.execute(
             #        sql.SQL("SELECT * FROM {}").format(
             #            sql.Identifier("train_metadata")))
@@ -285,22 +288,22 @@ def main(args):
             # q = x[0][1]
             # dq = x[0][2]
             # diq = x[0][3]
-            c.execute(sql.SQL(
-                "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(10000);").format(
-                sql.Identifier("new_eval_data")))
-            x = np.asarray(c.fetchall())
-            iq_list = x[:, 1]
-            diq = x[:, 2]
-            y_list = x[:, 3]
-            encoded = encoder.transform(y_list)
-            yt = np.asarray(to_categorical(encoded, 64))
-            q_list = np.asarray(
-                [np.transpose([np.log10(iq), np.log10(dq)]) for iq, dq in
-                 zip(iq_list, diq)])
+    #        c.execute(sql.SQL(
+    #            "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(10000);").format(
+    #            sql.Identifier("new_eval_data")))
+    #        x = np.asarray(c.fetchall())
+    #        iq_list = x[:, 1]
+    #        diq = x[:, 2]
+    #        y_list = x[:, 3]
+    #        encoded = encoder.transform(y_list)
+    #        yt = np.asarray(to_categorical(encoded, 64))
+    #        q_list = np.asarray(
+    #            [np.transpose([np.log10(iq), np.log10(dq)]) for iq, dq in
+    #             zip(iq_list, diq)])
 
-    sql_net("new_train_data", "new_train_metadata",
-            verbosity=parsed.verbose, save_path=parsed.save_path,
-            encoder=encoder, xval=q_list, yval=yt)
+    #sql_net("new_train_data", "new_train_metadata",
+    #        verbosity=parsed.verbose, save_path=parsed.save_path,
+    #        encoder=encoder, xval=q_list, yval=yt)
 
 
 if __name__ == '__main__':
