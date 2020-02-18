@@ -1,22 +1,24 @@
-from __future__ import print_function
-
 import logging
 
-import keras
+from numpy import asarray
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+
 from hyperas import optim
 from hyperopt import Trials, tpe
+from hyperopt import STATUS_OK
+
+import keras
 from keras import backend as K
 from keras.layers.convolutional import Conv1D, MaxPooling1D
 from keras.layers.core import Dense, Dropout, Flatten
 from keras.layers.embeddings import Embedding
 from keras.models import Sequential
+from keras.utils import np_utils
 
+from .sas_io import read_seq_1d
 
 def data():
-    from keras.utils import np_utils
-    from sklearn.preprocessing import LabelEncoder
-    from sklearn.model_selection import train_test_split
-    from sas_io import read_seq_1d
     a, b, c, d = read_seq_1d("../sasmodels/out2/", pattern="_eval_",
                              verbosity=True)
     encoder = LabelEncoder()
@@ -29,8 +31,6 @@ def data():
 
 
 def model(xtrain, ytrain, xtest, ytest):
-    from hyperopt import STATUS_OK
-    from numpy import asarray
     model = Sequential()
     model.add(Embedding(3000, 64, input_length=100))
     model.add(Conv1D(128, kernel_size=3, activation='relu'))

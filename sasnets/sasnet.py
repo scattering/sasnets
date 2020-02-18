@@ -5,36 +5,30 @@ networks.
 SASNets uses Keras and Tensorflow for the networks. You can change the backend
 to Theano or CNTK through the Keras config file.
 """
-from __future__ import print_function
-
 # System imports
 import argparse
 import logging
 import os
 import sys
+import time
+import random
 
 # Installed packages
-import keras
-import matplotlib.pyplot as plt
 import numpy as np
-import psycopg2 as psql
-import time
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+import keras
 from keras.callbacks import TensorBoard, EarlyStopping
 from keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
     MaxPooling1D
 from keras.models import Sequential
 from keras.utils.np_utils import to_categorical
-from psycopg2 import sql
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 # SASNets packages
-from sas_io import sql_dat_gen, read_seq_1d
-# Define the argparser parameters
-from util.util import inepath
-from sasnets.util.utils import inepath
+from . import sas_io
+from .util.utils import inepath
 
+# Define the argparser parameters
 parser = argparse.ArgumentParser(
     description="Use neural nets to classify scattering data.")
 parser.add_argument("path", help="Relative or absolute path to a folder "
@@ -44,18 +38,11 @@ parser.add_argument("-v", "--verbose", help="Control output verbosity",
 parser.add_argument("-s", "--save-path",
                     help="Path to save model weights and info to")
 
-# Convert PostgreSQL floats to actual floats rather than Decimal()s
-DEC2FLOAT = psql.extensions.new_type(
-    psql._psycopg.DECIMAL.values,
-    'DEC2FLOAT',
-    lambda value, curs: float(value) if value is not None else None)
-psql.extensions.register_type(DEC2FLOAT, None)
 
-
-def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
-            yval=None):
+def sql_net(datatable, metatable, verbosity=False, save_path=None,
+            label_encoder=None, xval=None, yval=None):
     """
-    A 1D convnet that uses a generator reading from a Postgres database
+    A 1D convnet that uses a generator reading from a SQL database
     instead of loading all files into memory at once.
 
     :param dn: The data table name.
@@ -67,14 +54,11 @@ def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
     :param yval: A list of validation data, label version.
     :return: None
     """
-    if verbosity:
-        v = 1
-    else:
-        v = 0
-    base = inepath(save_path)
+    vlevel = 1 if verbosity else 0
+    basename = inepath(save_path)
 
-    tb = TensorBoard(log_dir=os.path.dirname(base), histogram_freq=1)
-    es = EarlyStopping(min_delta=0.001, patience=15, verbose=v)
+    tb = TensorBoard(log_dir=os.path.dirname(basename), histogram_freq=1)
+    es = EarlyStopping(min_delta=0.001, patience=15, verbose=vlevel)
 
     # Begin model definitions
     model = Sequential()
@@ -94,34 +78,28 @@ def sql_net(dn, mn, verbosity=False, save_path=None, encoder=None, xval=None,
                   metrics=['accuracy'])
 
     # Model Run
-    if v:
+    if vlevel > 0:
         print(model.summary())
-    history = model.fit_generator(sql_dat_gen(dn, mn, encoder=encoder), 20000,
-                                  epochs=60, workers=1, verbose=v,
+    seq = sas_io.sql_stream(datatable, metatable, encoder=label_encoder, batch_size=5)
+    history = model.fit_generator(seq, 20000,
+                                  epochs=60, workers=1, verbose=vlevel,
                                   validation_data=(xval, yval),
                                   max_queue_size=1, callbacks=[tb, es])
 
-    # Model Save
-    plt.plot(history.history['acc'])
-    plt.plot(history.history['val_acc'])
-    plt.title('model accuracy')
-    plt.ylabel('accuracy')
-    plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper left')
-
     score = None
-    if not (base is None):
-        model.save(base + ".h5")
-        if xval is not None and yval is not None:
-            score = model.evaluate(xval, yval, verbose=v)
-            print('\nTest loss: ', score[0])
-            print('Test accuracy:', score[1])
-        with open(base + ".history", 'w') as fd:
+    if xval is not None and yval is not None:
+        score = model.evaluate(xval, yval, verbose=vlevel)
+        print('\nTest loss: ', score[0])
+        print('Test accuracy:', score[1])
+
+    # Model Save
+    if basename is not None:
+        model.save(basename + ".h5")
+        with open(basename + ".history", 'w') as fd:
             fd.write(str(history.history) + "\n")
             if score is not None:
                 fd.write(str(score) + "\n")
-        with open(base + ".svg", 'w') as fd:
-            plt.savefig(fd, format='svg', bbox_inches='tight')
+        plot_history(history, basename=basename)
     logging.info("Complete.")
 
 
@@ -139,11 +117,8 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     :param save_path: The path to save the model to. If it points to a directory, writes to a file named the current unix time. If it points to a file, the file is overwritten.
     :return: None.
     """
-    if verbosity:
-        v = 1
-    else:
-        v = 0
-    base = inepath(save_path)
+    vlevel = 1 if verbosity else 0
+    basename = inepath(save_path)
 
     encoder = LabelEncoder()
     encoder.fit(y)
@@ -155,8 +130,8 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     #    raise ValueError("Differing number of categories in train (" + str(
     #        len(set(y))) + ") and test (" + str(len(set(yevl))) + ") data.")
 
-    tb = TensorBoard(log_dir=os.path.dirname(base), histogram_freq=1)
-    es = EarlyStopping(min_delta=0.005, patience=5, verbose=v)
+    tb = TensorBoard(log_dir=os.path.dirname(basename), histogram_freq=1)
+    es = EarlyStopping(min_delta=0.005, patience=5, verbose=vlevel)
 
     # Begin model definitions
     model = Sequential()
@@ -179,38 +154,30 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
                   metrics=['accuracy'])
 
     # Model Run
-    if v:
+    if vlevel > 0:
         print(model.summary())
-    history = model.fit(xval, yval, batch_size=5, epochs=50, verbose=v,
+    history = model.fit(xval, yval, batch_size=5, epochs=50, verbose=vlevel,
                         validation_data=(xtest, ytest), callbacks=[tb, es])
     score = None
-    if not (xevl is None) and not (yevl is None):
+    if xevl is not None and yevl is not None:
         e2 = LabelEncoder()
         e2.fit(yevl)
         yv = to_categorical(e2.transform(yevl))
-        score = model.evaluate(xevl, yv, verbose=v)
+        score = model.evaluate(xevl, yv, verbose=vlevel)
         print('\nTest loss: ', score[0])
         print('Test accuracy:', score[1])
 
     # Model Save
-    plt.plot(history.history['acc'])
-    plt.plot(history.history['val_acc'])
-    plt.title('model accuracy')
-    plt.ylabel('accuracy')
-    plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper left')
-    if not (base is None):
-        with open(base + ".history", 'w') as fd:
+    if not (basename is None):
+        model.save(basename + ".h5")
+        with open(basename + ".history", 'w') as fd:
             fd.write(str(list(set(y))) + "\n")
             fd.write(str(history.history) + "\n")
             if score is not None:
                 fd.write(str(score) + "\n")
             fd.write("Seed " + str(random_s))
-        model.save(base + ".h5")
-        with open(base + ".svg", 'w') as fd:
-            plt.savefig(fd, format='svg', bbox_inches='tight')
+        plot_history(history, basename=basename)
     logging.info("Complete.")
-
 
 def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
     """
@@ -242,13 +209,34 @@ def trad_nn(x, y, xevl=None, yevl=None, random_s=235):
     model.compile(loss='categorical_crossentropy', optimizer="adam",
                   metrics=['accuracy'])
     print(model.summary())
-    model.fit(xval, yval, batch_size=10, epochs=10, verbose=1,
-              validation_data=(xtest, ytest))
+    history = model.fit(xval, yval, batch_size=10, epochs=10, verbose=1,
+                        validation_data=(xtest, ytest))
     if xevl and yevl:
         score = model.evaluate(xtest, ytest, verbose=0)
         print('Test loss: ', score[0])
         print('Test accuracy:', score[1])
 
+    #plot_history(history, basename=basename)
+
+
+def plot_history(history, basename=None):
+    import matplotlib.pyplot as plt
+    plt.plot(history.history['acc'])
+    plt.plot(history.history['val_acc'])
+    plt.title('model accuracy')
+    plt.ylabel('accuracy')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper left')
+    with open(basename + ".svg", 'w') as fd:
+        plt.savefig(fd, format='svg', bbox_inches='tight')
+
+def read_data(path, pattern='_all_', verbosity=True):
+    time_start = time.perf_counter()
+    q, iq, label, n = sas_io.read_seq_1d(path, pattern=pattern, verbosity=verbosity)
+    time_end = time.perf_counter() - time_start
+    logging.info("File I/O Took " + str(time_end) + " seconds for " + str(n) +
+                 " points of data.")
+    return np.asarray(iq), label
 
 def main(args):
     """
@@ -257,55 +245,13 @@ def main(args):
     :param args: Command line args.
     :return: None.
     """
+
     parsed = parser.parse_args(args)
-    time_start = time.clock()
-    a, b, c, n = read_seq_1d(parsed.path, pattern='_all_',
-                                   verbosity=parsed.verbose)
-     #gc.collect()
-     #at, bt, ct, dt, et, nt = read_seq_1d(parsed.path, pattern='_eval_',
-    #                                     verbosity=parsed.verbose)
-    time_end = time.clock() - time_start
-    logging.info("File I/O Took " + str(time_end) + " seconds for " + str(n) +
-                 " points of data.")
-    import random
-    r = random.randint(0, 2 ** 32 - 1)
-    logging.warn("Random seed for this iter is " + str(r))
-    oned_convnet(np.asarray(b), c, None, None, random_s=r,
+    data, label = read_data(parsed.path, verbosity=parsed.verbose)
+    seed = random.randint(0, 2 ** 32 - 1)
+    logging.info(f"Random seed for this iter is {seed}")
+    oned_convnet(data, label, None, None, random_s=seed,
                  verbosity=parsed.verbose, save_path=parsed.save_path)
-    #conn = psql.connect("dbname=sas_data user=sasnets host=127.0.0.1")
-    # conn.set_session(readonly=True)
-    #with conn:
-    #    with conn.cursor() as c:
-    #        c.execute("SELECT model FROM new_train_data;")
-    #        xt = set(c.fetchall())
-    #        y = [i[0] for i in xt]
-    #        encoder = LabelEncoder()
-    #        encoder.fit(y)
-    #        c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows;")
-            # c.execute(
-            #        sql.SQL("SELECT * FROM {}").format(
-            #            sql.Identifier("train_metadata")))
-            # x = np.asarray(c.fetchall())
-            # q = x[0][1]
-            # dq = x[0][2]
-            # diq = x[0][3]
-    #        c.execute(sql.SQL(
-    #            "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(10000);").format(
-    #            sql.Identifier("new_eval_data")))
-    #        x = np.asarray(c.fetchall())
-    #        iq_list = x[:, 1]
-    #        diq = x[:, 2]
-    #        y_list = x[:, 3]
-    #        encoded = encoder.transform(y_list)
-    #        yt = np.asarray(to_categorical(encoded, 64))
-    #        q_list = np.asarray(
-    #            [np.transpose([np.log10(iq), np.log10(dq)]) for iq, dq in
-    #             zip(iq_list, diq)])
-
-    #sql_net("new_train_data", "new_train_metadata",
-    #        verbosity=parsed.verbose, save_path=parsed.save_path,
-    #        encoder=encoder, xval=q_list, yval=yt)
-
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)

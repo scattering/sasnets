@@ -11,18 +11,17 @@ import os
 import random
 import sys
 
-import bottleneck
-import keras
-import matplotlib.pyplot as plt
 import numpy as np
-import psycopg2 as psql
-from keras.utils import to_categorical
 from pandas import factorize
-from psycopg2 import sql
-from sasnets.sas_io import read_seq_1d
+import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import linkage, dendrogram
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import LabelEncoder
+import bottleneck
+import keras
+from keras.utils import to_categorical
+
+from .sas_io import read_seq_1d
 
 parser = argparse.ArgumentParser(
     description="Test a previously trained neural network, or use it to "

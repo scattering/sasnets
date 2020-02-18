@@ -2,21 +2,19 @@ from __future__ import print_function
 
 import argparse
 import sys
+import sqlite3
 
 import numpy as np
-import psycopg2 as pgsql
-from psycopg2 import sql
 
 parser = argparse.ArgumentParser()
 parser.add_argument("tablename", help="Database table name to run on.")
 parser.add_argument("--dbname", help="Database name to connect to.",
-                    default="sas_data")
+                    default="sasdata.db")
 parser.add_argument("--user", help="Database username.", default="sasnets")
 parser.add_argument("--password", help="Database password.", default="sasnets")
 parser.add_argument("--host", help="Database host.", default="127.0.0.1")
 
 
-# noinspection SqlNoDataSourceInspection,SqlResolve
 def main(args):
     """
     Main function. Args should conform to the argparse args specified.
@@ -25,11 +23,11 @@ def main(args):
     :return: None
     """
     parsed = parser.parse_args(args)
-    conn = pgsql.connect(
+    conn = sqlite3.connect(
         "dbname=" + parsed.dbname + " user=" + parsed.user + " password=" +
         parsed.password + " host=" + parsed.host)
     c = conn.cursor()
-    c.execute(sql.SQL("SELECT id FROM {}").format(sql.Identifier(parsed.name)))
+    c.execute(sqlite3.SQL("SELECT id FROM {}").format(sql.Identifier(parsed.name)))
     lid = c.fetchall()
     for nid in lid:
         c.execute(sql.SQL("SELECT * FROM {} WHERE id = %s").format(

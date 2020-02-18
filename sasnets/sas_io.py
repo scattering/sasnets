@@ -5,71 +5,92 @@ functions as well as the SQL generator.
 
 from __future__ import print_function
 
+from contextlib import closing
 import ast
 import itertools
 import logging
 import multiprocessing
+import functools
 import os
 import re
+import json
+
+try:
+    # ruamel has better json input processing.
+    from ruamel.yaml import safe_load as json_load
+except ImportError:
+    from json import loads as json_load
 
 import numpy as np
-import psycopg2 as psql
-from keras.utils.np_utils import to_categorical
-from psycopg2 import sql
 
-gpath = ""
-gpattern = ""
+## In case we want to go back to PostgreSQL
+#def sql_connect(dbname="sas_data", host="127.0.0.1", user="sasnets"):
+#    import psycopg2 as pqsql
+#    conn = pgsql.connect(f"dbname={dbname} user={user} host={host}")
+#    conn.execute(f"CREATE EXTENSION IF NOT EXISTS tsm_system_rows")
+#    return conn
 
-try:  # Python 3 compatibility
-    xrange(1)
-    nrange = xrange
-except NameError:
-    nrange = range
+DB_DTYPE = np.dtype('<f4')
+DB_FILE = "sasnets.db"
+def sql_connect(dbfile=DB_FILE):
+    import sqlite3
+    conn = sqlite3.connect(dbfile)
+    return conn
 
 
-def sql_dat_gen(dname, mname, dbname="sas_data", host="127.0.0.1",
-                user="sasnets", encoder=None):
+def sql_iread(db, datatable, metatable, encoder=None, batch_size=5):
     """
-    A Pythonic generator that gets its data from a PostgreSQL database. Yields a
-    (iq, diq) list and a label list.
+    Generator that gets its data from a SQL database.
 
-    :param dname: The data table name to connect to.
-    :param mname: The metadata table name to connect to.
-    :param dbname: The database name.
-    :param host: The database host.
-    :param user: The username to connect as.
+    Yields batches of data and label with data = [log10(iq), ...] and
+    label = ['model', ...].
+
+    Data is chosen at random with replacement and runs forever.
+
+    :param db: The SQL database connection.
+    :param datatable: The data table name to connect to.
     :param encoder: LabelEncoder for transforming labels to categorical ints.
-    :return: None
     """
-    conn = psql.connect("dbname=" + dbname + " user=" + user + " host=" + host)
-    with conn:
-        with conn.cursor() as c:
-            c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows")
-            c.execute(
-                sql.SQL("SELECT * FROM {}").format(
-                    sql.Identifier(mname)))
-            # x = np.asarray(c.fetchall())
-            # pprint(x)
-            while True:
-                c.execute(
-                    sql.SQL(
-                        "SELECT * FROM {} TABLESAMPLE SYSTEM_ROWS(5)").format(
-                        sql.Identifier(dname)))
-                x = np.asarray(c.fetchall())
-                iq_list = x[:, 1]
-                diq = x[:, 2]
-                y_list = x[:, 3]
-                encoded = encoder.transform(y_list)
-                yt = np.asarray(to_categorical(encoded, 64))
-                q_list = np.asarray(
-                    [np.transpose([np.log10(iq), np.log10(dq)]) for iq, dq in
-                     zip(iq_list, diq)])
-                yield q_list, yt
-    conn.close()
+    from keras.utils.np_utils import to_categorical
 
+    # Build query string, checking values before substituting
+    batch_size = int(batch_size) # force integer
+    assert datatable.isidentifier()
+    # using implicit rowid column in (most) SQLite tables.
+    random_row_query = f"""
+        SELECT (model, iq) FROM {datatable} WHERE rowid IN
+            (SELECT rowid FROM table ORDER BY RANDOM() LIMIT {batch_size})
+        """
+    ## PostgreSQL supports tablesample
+    #random_row_query = f"""
+    #    SELECT (iq, model) FROM {datatable}
+    #        TABLESAMPLE SYSTEM_ROWS({batch_size})"""
 
-# noinspection PyUnusedLocal
-def read_parallel_1d(path, pattern='_eval_'):
+    with db, closing(db.cursor()) as cursor:
+        while True:
+            cursor.execute(random_row_query)
+            data = cursor.fetchall()
+            models, iq = zip(*data)
+            # Convert binary blob back into numpy array
+            iq = [np.frombuffer(v, dtype=DB_DTYPE) for v in iq]
+            iq = [np.log10(v) for v in iq]
+            encoded = encoder.transform(models)
+            categorical = np.asarray(to_categorical(encoded, 64))
+            yield iq, categorical
+
+def read_sql(db, datatable):
+    assert datatable.isidentifier()
+    all_rows = f"SELECT model, seed, iq FROM {datatable}"
+    with db, closing(db.cursor()) as cursor:
+        cursor.execute(all_rows)
+        data = cursor.fetchall()
+    model, seed, iq = zip(*data)
+    # Convert binary blob back into numpy array
+    iq = [np.frombuffer(v, dtype=DB_DTYPE) for v in iq]
+    #for a,b,c in zip(model, seed, iq): print("key", a, b, c[:3])
+    return iq, model
+
+def read_1d_parallel(path, tag='train', format='csv', verbose=True):
     """
     Reads all files in the folder path. Opens the files whose names match the
     regex pattern. Returns lists of Q, I(Q), and ID. Path can be a
@@ -88,128 +109,149 @@ def read_parallel_1d(path, pattern='_eval_'):
     :param path: Path to the directory of files to read from.
     :param pattern: A regex. Only files matching this regex are opened.
     """
-    global gpath
-    global gpattern
-    # q_list, iq_list, y_list = (list() for i in range(3))
-    # pattern = re.compile(pattern)
-
-    gpattern = pattern
-    gpath = path
-    nlines = 0
-    l = 0
-    fn = os.listdir(path)
-    chunked = [fn[i: i + 1] for i in nrange(0, len(fn), 1)]
+    parser = re.compile(f"_{tag}_.*[.]{format}")
+    files = (fn+path for fn in os.listdir(path) if parser.search(fn))
     pool = multiprocessing.Pool(multiprocessing.cpu_count() / 2,
                                 maxtasksperchild=2)
-    result = np.asarray(
-        pool.map(read_h, chunked, chunksize=1))
-    pool.close()
+    reader = _read_csv if format == 'csv' else _read_json
+    delayed = pool.imap_unordered(reader, files, chunksize=100)
+    # TODO: try prellocating array joined iterable
+    iq, labels = (np.asarray(v) for v in zip(*delayed))
     pool.join()
+    pool.close()
     logging.info("IO Done")
-    result = list(itertools.chain.from_iterable(result))
-    q_list = result[0::3]
-    iq_list = result[1::3]
-    y_list = result[2::3]
-    return q_list, iq_list, y_list, nlines  # noinspection PyUnusedLocal
+    return iq, labels
 
-
-def read_h(l):
-    """
-    Read helper for parallel read.
-
-    :param l: A list of filenames to read from.
-    :return: Three lists, Q, IQ, and Y, corresponding to Q data, I(Q) data, and model labels respectively.
-    """
-    logging.info(os.getpid())
-    if l is None:
-        raise Exception("Empty args")
-    global gpath  # Abuse globals because pool only passes one argument
-    global gpattern
-    q_list, iq_list, y_list = (list() for i in nrange(3))
-    p = re.compile(gpattern)
-    for fn in l:
-        if p.search(fn):
-            try:
-                with open(gpath + fn, 'r') as fd:
-                    logging.info("Reading " + fn)
-                    templ = ast.literal_eval(fd.readline().strip())
-                    y_list.extend([templ[0] for i in nrange(templ[1])])
-                    t2 = ast.literal_eval(fd.readline().strip())
-                    q_list.extend([t2 for i in nrange(templ[1])])
-                    iq_list.extend(ast.literal_eval(fd.readline().strip()))
-            except Exception as e:
-                logging.warning("skipped" + fn + ", " + str(e))
-    return q_list, iq_list, y_list
-
-
-# noinspection PyCompatibility,PyUnusedLocal
-def read_seq_1d(path, pattern='_eval_', typef='aggr', verbosity=False):
+def read_1d_serial(path, tag='train', format='csv', verbose=True):
     """
     Reads all files in the folder path. Opens the files whose names match the
-    regex pattern. Returns lists of Q, I(Q), and ID. Path can be a
+    regex pattern. Returns lists of I(Q), and model. Path can be a
     relative or absolute path. Uses a single thread only. It is recommended to
     use :meth:`read_parallel_1d`, except in hyperopt, where map() is broken.
 
-    typef is one of 'json' or 'aggr'. JSON mode reads in all and only json files
-    in the folder specified by path. aggr mode reads in aggregated data files.
-    See sasmodels/generate_sets.py for more about these formats.
+    *format* is one of 'json' or 'csv'. JSON mode reads in all and only json
+    files in the folder specified by path. csv mode reads in aggregated data
+    files. See sasmodels/generate_sets.py for more about these formats.
 
     Assumes files contain 1D data.
 
     :param path: Path to the directory of files to read from.
-    :param pattern: A regex. Only files matching this regex are opened.
+    :param tag: A regex. Only files matching this regex are opened.
     :param typef: Type of file to read (aggregate data or json data).
-    :param verbosity: Controls the verbosity of output.
+    :param verbose: Controls the verbose of output.
     """
-    q_list, iq_list, y_list, = (list() for i in nrange(3))
-    # dq_list, iq_list, diq_list, y_list = (list() for i in nrange(5))
-    pattern = re.compile(pattern)
-    n = 0
-    nlines = None
-    if typef == 'json':
-        try:
-            from ruamel.yaml import safe_load
-            # ruamel has better json input processing.
-        except ImportError:
-            from json import loads as safe_load
-        for fn in os.listdir(path):
-            if pattern.search(fn):  # Only open JSON files
-                with open(path + fn, 'r') as fd:
-                    n += 1
-                    data_d = safe_load(fd)
-                    q_list.append(data_d['data']['Q'])
-                    iq_list.append(data_d["data"]["I(Q)"])
-                    y_list.append(data_d["model"])
-                if (n % 100 == 0) and verbosity:
-                    print("Read " + str(n) + " files.")
-    if typef == 'aggr':
-        nlines = 0
-        for fn in sorted(os.listdir(path)):
-            if pattern.search(fn):
-                try:
-                    with open(path + fn, 'r') as fd:
-                        print("Reading " + fn)
-                        templ = ast.literal_eval(fd.readline().strip())
-                        y_list.extend([templ[0] for i in nrange(10000)])
-                        t2 = ast.literal_eval(fd.readline().strip())
-                        q_list.extend([t2 for i in nrange(10000)])
-                        iq_list.extend(
-                            ast.literal_eval(fd.readline().strip()))
-                        # dqt = ast.literal_eval(fd.readline().strip())
-                        # dq_list.extend([dqt for i in xrange(templ[1])])
-                        # diqt = ast.literal_eval(fd.readline().strip())
-                        # diq_list.extend([diqt for i in xrange(templ[1])])
-                        nlines += 10000
-                    if (n % 1000 == 0) and verbosity:
-                        print("Read " + str(nlines) + " points.")
-                except Exception as e:
-                    logging.warning("skipped " + fn + ", " + str(e))
-                    # raise
+    parser = re.compile(f"_{tag}_.*[.]{format}")
+    files = (fn+path for fn in os.listdir(path) if parser.search(fn))
+    if format == 'json':
+        items = []
+        for k, fn in enumerate(files):
+            items.append(_read_json(path+fn))
+            if (k % 100 == 0) and verbose:
+                print("Read " + str(k) + " files.")
+    elif format == 'csv':
+        items = []
+        for k, fn in enumerate(files):
+            items.append(_read_csv(path+fn))
+            if (k % 100 == 0) and verbose:
+                print("Read " + str(k) + " files.")
     else:
-        print(
-            "Error: the type " + typef + " was not recognised. Valid types "
-                                         "are 'aggr' and 'json'.")
-    return q_list, iq_list, y_list, nlines,  # dq_list, diq_list, nlines
+        print(f"Error: the type {format} was not recognised. Valid types"
+              f" are 'aggr' and 'json'.")
+    iq, model = zip(*items)
+    return iq, model
+
+def _read_csv(path):
+    with open(path, 'r') as fd:
+        logging.info("Reading " + path)
+        model = ast.literal_eval(fd.readline().strip())[0]
+        fd.readline() # q
+        fd.readline() # dq
+        iq = ast.literal_eval(fd.readline().strip())
+        #fd.readline() # iq
+        return iq, model
+
+def _read_json(path):
+    with open(path, 'r') as fd:
+        data_d = json_load(fd)
+        return data_d["data"]["IQ"], data_d["model"]
+
+
+# Jie Yang https://stackoverflow.com/a/57915246/6195051
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return super(NpEncoder, self).default(obj)
+
+def write_sql(db, table, model, items):
+    with db, closing(db.cursor()) as cursor:
+        # Check that table exists before writing
+        cursor.execute(f"""
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='{table}'""")
+        result = cursor.fetchall()
+        if not result:
+            # TODO: Make model+seed the primary key so no duplicates?
+            cursor.execute(f"""
+                CREATE TABLE {table} (
+                    model TEXT, seed INTEGER, params TEXT,
+                    q BLOB, dq BLOB, iq BLOB, diq BLOB)
+                """)
+        # Write entries to the table
+        for seed, params, data in items:
+            #print("key", model, seed, data[2][:3])
+            q, dq, iq, diq = (np.asarray(v, DB_DTYPE).tobytes() for v in data)
+            paramstr = json.dumps(params, cls=NpEncoder)
+            #paramstr = json.dumps({k: float(v) for k, v in params.items()})
+            #disp = lambda x: (print(x),x)[1]
+            cursor.execute(f"""
+                INSERT INTO {table} (model, seed, params, q, dq, iq, diq)
+                VALUES ('{model}', {seed}, ?, ?, ?, ?, ?)""",
+                (paramstr, q, dq, iq, diq))
+        db.commit()
+
+def write_1d(dirname, tag, model, items, format='csv'):
+    """
+    Write a series of *items* for *model* into file *dirname_tag_seed.format*.
+
+    *tag* is the name of the group, such as 'trial' or 'validate'.
+
+    *model* is the model name.
+
+    *items* is a sequence *[(seed, params, (q, dq, iq, diq)), ...]*.
+
+    *format* is 'csv' or 'json'
+    """
+    assert format in ('csv', 'json')
+    writer = _write_csv if format == 'csv' else _write_json
+    for seed, params, data in items:
+        filename = f"{model}_{tag}_{seed}.{format}"
+        path = os.path.join(dirname, filename)
+        logging.info("Writing " + path)
+        writer(path, model, seed, params, data)
+
+def _write_csv(path, model, seed, params, data):
+    with open(path, 'w') as fd:
+        # First line contains model, seed, par, val, par, val, ...
+        line = (model, seed) + (s for pair in params.items() for s in pair)
+        fd.write(",".join(repr(v) for v in line))
+        fd.write("\n")
+        # Subsequent lines contain data q, dq, iq, diq
+        for line in data:
+            fd.write(",".join(repr(v) for v in line))
+            fd.write("\n")
+
+def _write_json(path, model, seed, params, data):
+    with open(path, 'w') as fd:
+        q, dq, iq, diq = data
+        data = {'Q': q, 'dQ': dq, 'IQ': iq, 'dIQ': diq}
+        value = {'model': model, 'seed': seed, 'params': params, 'data': data}
+        json.dump(fd, value, cls=NpEncoder)
 
 
 if __name__ == '__main__':

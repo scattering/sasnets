@@ -1,13 +1,8 @@
 """
 Various small utility functions that are reused throughout the program.
 """
-from __future__ import print_function
-
 import os
 import time
-
-from matplotlib import pyplot as plt
-
 
 def plot(q, i_q):
     """
@@ -17,11 +12,11 @@ def plot(q, i_q):
     :param i_q: List of I values
     :return: None
     """
+    from matplotlib import pyplot as plt
+
     plt.style.use("classic")
-    plt.plot(q, i_q)
+    plt.loglog(q, i_q)
     ax = plt.gca()
-    ax.set_xscale("log")
-    ax.set_yscale("log")
     ax.autoscale(enable=True)
     plt.show()
 
