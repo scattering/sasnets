@@ -49,7 +49,7 @@ def asblob(data):
 # Then we can maybe learn to ignore noise in the data?
 # TODO: generalize to take a set of columns a column to data transform
 # Either that or give a choice amongst standard transforms, such as log/linear
-def sql_iread(db, tag, metatable, encoder=None, batch_size=5):
+def iread_sql(db, tag, metatable, encoder=None, batch_size=5):
     """
     Generator that gets its data from a SQL database.
 
@@ -66,7 +66,7 @@ def sql_iread(db, tag, metatable, encoder=None, batch_size=5):
 
     # Build query string, checking values before substituting
     batch_size = int(batch_size) # force integer
-    assert datatable.isidentifier()
+    assert tag.isidentifier()
     # using implicit rowid column in (most) SQLite tables.
     random_row_query = f"""
         SELECT (model, iq) FROM {tag} WHERE rowid IN

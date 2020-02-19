@@ -89,7 +89,7 @@ def gen_data(model_name, data, count=1, noise=2,
         seed = np.random.randint(int(1e6))
         t1 = time.perf_counter()
         if t1 > t0 + interval:
-            print(f"generating {model_name} {k+1} of {count} with seed {seed}")
+            print(f"generating {model_name} {k+1} of {count}")
             t0 = t1
 
         # Generate parameters

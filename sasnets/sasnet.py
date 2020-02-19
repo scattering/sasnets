@@ -80,7 +80,8 @@ def sql_net(datatable, metatable, verbosity=False, save_path=None,
     # Model Run
     if vlevel > 0:
         print(model.summary())
-    seq = sas_io.sql_stream(datatable, metatable, encoder=label_encoder, batch_size=5)
+    db = sas_io.sql_connect()
+    seq = sas_io.iread_sql(db, datatable, metatable, encoder=label_encoder, batch_size=5)
     history = model.fit_generator(seq, 20000,
                                   epochs=60, workers=1, verbose=vlevel,
                                   validation_data=(xval, yval),
