@@ -141,25 +141,39 @@ def run_model(opts):
             'accuracy': 'Low', 'view': 'log', 'zero': False,
             })
 
+    # Open database and lookup model counts.
     db = sas_io.sql_connect()
-    # Names for columns of data retrieved from simulate
     model_counts = sas_io.model_counts(db, tag)
     #print(model_counts)
-    batch_size = 100
     for model in model_list:
         # Figure out how many more entries we need for the model
         missing = count - model_counts.get(model, 0)
-        # Process the missing entries batch by batch
-        while missing > 0:
-            batch = min(missing, batch_size)
-            missing -= batch
-            # TODO: should _not_ need deepcopy(data) but somethings messing with q
-            items = gen_data(model, deepcopy(data), count=batch, mono=mono,
-                             cutoff=cutoff, precision=precision, noise=noise)
-            sas_io.write_sql(db, model, items, tag=tag)
+        if missing <= 0:
+            continue
+        # TODO: should not need deepcopy(data) but something is messing with q
+        seq = gen_data(model, deepcopy(data), count=missing, mono=mono,
+                       cutoff=cutoff, precision=precision, noise=noise)
+        # Process the missing entries batch by batch so if there is an
+        # error we won't lose the entire group.
+        for batch in chunk(seq, batch_size=100):
+            sas_io.write_sql(db, model, batch, tag=tag)
             #sas_io.write_1d(path, model, items, tag=tag)
     #sas_io.read_sql(db, tag)
     db.close()
+
+def chunk(seq, batch_size):
+    """
+    Chunk sequence in groups of *batch_size*.
+
+    Remaining items are returned in final group.
+    """
+    batch = []
+    for item in seq:
+        if len(batch) == batch_size:
+            yield batch
+            batch = []
+        batch.append(item)
+    yield batch
 
 def main():
     parser = argparse.ArgumentParser(
