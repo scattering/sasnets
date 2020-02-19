@@ -30,6 +30,80 @@ from . import sas_io
 
 MODELS = sascore.list_models()
 
+# Maxim @ stackoverflow
+# https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse/43357954#43357954
+# (with mods by PAK)
+def str2bool(value):
+    """parse boolean argument"""
+    if isinstance(value, bool):
+       return value
+    value = value.lower()
+    if value in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif value in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value (1/0, Y[es]/N[o], T[rue]/F[alse]) expected.')
+
+parser = argparse.ArgumentParser(
+    prog=__file__,
+    description="""
+    A script that generates SANS datasets for use in neural network training.""")
+parser.add_argument(
+    "model",
+    help=f"""
+    model is the model name of the model or one of the model types
+    listed in sasmodels.core.list_models {sascore.KINDS}. Model types can be
+    combined, such as 2d+single.""")
+parser.add_argument(
+    "--tag", type=str, default="train",
+    help="Tag for the generated data: train or test.")
+parser.add_argument(
+    "--count", type=int, default=1000,
+    help="Count is the number of distinct models to generate.")
+parser.add_argument(
+    "--database", type=str, default=sas_io.DB_FILE,
+    help="Path to the sqlite database file.")
+parser.add_argument(
+    "--template", type=str, default="",
+    help="Template file defining q and resolution.")
+parser.add_argument(
+    "--resolution", type=float, default=3,
+    help="Constant dQ/Q resolution %.")
+parser.add_argument(
+    "--noise", type=float, default=2,
+    help="Constant dI/I uncertainty %.")
+parser.add_argument(
+    "--dimension", choices=('1D', '2D'), default='1D',
+    help="Choose whether to generate 1D or 2D data.")
+parser.add_argument(
+    "--npoint", type=int, default=128,
+    help="The number of points per model.")
+parser.add_argument(
+    "--mono", type=str2bool, default=True,
+    help="Force all models to be monodisperse.")
+parser.add_argument(
+    "--magnetic", type=str2bool, default=False,
+    help="Allow magnetic parameters in the model")
+parser.add_argument(
+    "--cutoff",
+    type=float, default=0.,
+    help="""
+    CUTOFF is the cutoff value to use for the polydisperse distribution.
+    Weights below the cutoff will be ignored.""")
+parser.add_argument(
+    "--precision",
+    choices=['default', 'single', 'double', 'fast', 'single!', 'double!', 'quad!'],
+    default='default',
+    help="""
+    Precision to use in floating point calculations. If postfixed with
+    an '!', builds a DLL for the CPU. If default, use single unless the
+    model requires double.""")
+parser.add_argument(
+    "-v", "--verbose",
+    help="Verbose output level.", choices=[0, 1, 2])
+
+
 # noinspection PyTypeChecker
 def gen_data(model_name, data, count=1, noise=2,
              mono=True, magnetic=False, cutoff=1e-5,
@@ -53,6 +127,7 @@ def gen_data(model_name, data, count=1, noise=2,
     Returns iterator *(seed, pars, data), ...* where *pars* is
     *{par: value, ...}* and *data* is *(q, dq, iq, diq)*.
     """
+    is2d = False
     assert data.x.size > 0
     model_info = sascore.load_model_info(model_name)
     calculator = sascomp.make_engine(model_info, data, precision, cutoff)
@@ -101,6 +176,9 @@ def gen_data(model_name, data, count=1, noise=2,
         if not magnetic:
             pars = sascomp.suppress_magnetism(pars)
         pars.update({'scale': 1, 'background': 1e-5})
+        #print(f"{model_name} {seed} {sorted(pars.items())}")
+        parlist = sascomp.parlist(model_info, pars, is2d)
+        print(f"{model_name} {seed} {parlist.replace(os.linesep, ' // ')}")
 
         # Evaluate model
         data = simulate(pars) # q, dq, iq, diq
@@ -117,8 +195,9 @@ def run_model(opts):
     count = opts.count
     is2D = opts.dimension.startswith('2d')
     nq = opts.npoint
-    mono = opts.cutoff == 'mono'
-    cutoff = float(opts.cutoff) if not mono else 0
+    mono = opts.mono
+    magnetic = opts.magnetic
+    cutoff = opts.cutoff if not mono else 0
     precision = opts.precision
     res = opts.resolution
     noise = opts.noise
@@ -142,7 +221,7 @@ def run_model(opts):
             })
 
     # Open database and lookup model counts.
-    db = sas_io.sql_connect()
+    db = sas_io.sql_connect(opts.database)
     model_counts = sas_io.model_counts(db, tag)
     #print(model_counts)
     for model in model_list:
@@ -151,8 +230,9 @@ def run_model(opts):
         if missing <= 0:
             continue
         # TODO: should not need deepcopy(data) but something is messing with q
-        seq = gen_data(model, deepcopy(data), count=missing, mono=mono,
-                       cutoff=cutoff, precision=precision, noise=noise)
+        seq = gen_data(
+            model, deepcopy(data), count=missing, mono=mono, magnetic=magnetic,
+            cutoff=cutoff, precision=precision, noise=noise)
         # Process the missing entries batch by batch so if there is an
         # error we won't lose the entire group.
         for batch in chunk(seq, batch_size=100):
@@ -176,62 +256,6 @@ def chunk(seq, batch_size):
     yield batch
 
 def main():
-    parser = argparse.ArgumentParser(
-        prog=__file__,
-        description="""
-        A script that generates SANS datasets for use in neural network training.""")
-    parser.add_argument(
-        "model",
-        help=f"""
-        model is the model name of the model or one of the model types
-        listed in sasmodels.core.list_models {sascore.KINDS}. Model types can be
-        combined, such as 2d+single.""")
-    parser.add_argument(
-        "--tag", type=str, default="train",
-        help="Tag for the generated data: train or test.")
-    parser.add_argument(
-        "--count", type=int, default=1000,
-        help="Count is the number of distinct models to generate.")
-    parser.add_argument(
-        "--database", type=str, default=sas_io.DB_FILE,
-        help="Path to the sqlite database file.")
-    parser.add_argument(
-        "--template", type=str, default="",
-        help="Template file defining q and resolution.")
-    parser.add_argument(
-        "--resolution", type=float, default=3,
-        help="Constant dQ/Q resolution %.")
-    parser.add_argument(
-        "--noise", type=float, default=2,
-        help="Constant dI/I uncertainty %.")
-    parser.add_argument(
-        "--dimension", choices=('1D', '2D'), default='1D',
-        help="Choose whether to generate 1D or 2D data.")
-    parser.add_argument(
-        "--npoint", type=int, default=128,
-        help="The number of points per model.")
-    parser.add_argument(
-        "--cutoff",
-        default=0.,
-        help="""
-        CUTOFF is the cutoff value to use for the polydisperse distribution.
-        Weights below the cutoff will be ignored. Use 'mono' for
-        monodisperse models. The choice of polydisperse parameters, and
-        the number of points in the distribution is set in compare.py
-        defaults for each model. Polydispersity is given in the 'demo'
-        attribute of each model.""")
-    parser.add_argument(
-        "--precision",
-        choices=['default', 'single', 'double', 'fast', 'single!', 'double!', 'quad!'],
-        default='default',
-        help="""
-        Precision to use in floating point calculations. If postfixed with
-        an '!', builds a DLL for the CPU. If default, use single unless the
-        model requires double.""")
-    parser.add_argument(
-        "-v", "--verbose",
-        help="Verbose output level.", choices=[0, 1, 2])
-
     logging.basicConfig(level=logging.INFO)
     opts = parser.parse_args()
 
