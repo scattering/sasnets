@@ -7,10 +7,8 @@ from __future__ import print_function
 
 from contextlib import closing
 import ast
-import itertools
 import logging
 import multiprocessing
-import functools
 import os
 import re
 import json
@@ -34,11 +32,24 @@ DB_DTYPE = np.dtype('<f4')
 DB_FILE = "sasnets.db"
 def sql_connect(dbfile=DB_FILE):
     import sqlite3
+    # since we are using "with connection:" for our transactions, we
+    # get commit-rollback for free.  Otherwise we might be tempted to
+    # use auto-commit as follows:
+    #      conn = sqlite3.connect(dbfile, isolation_level=None)
     conn = sqlite3.connect(dbfile)
     return conn
 
+def asdata(blob):
+    return np.frombuffer(blob, dtype=DB_DTYPE)
 
-def sql_iread(db, datatable, metatable, encoder=None, batch_size=5):
+def asblob(data):
+    return np.asarray(data, DB_DTYPE).tobytes()
+
+# TODO: maybe return interleaved points log10(iq), diq/iq
+# Then we can maybe learn to ignore noise in the data?
+# TODO: generalize to take a set of columns a column to data transform
+# Either that or give a choice amongst standard transforms, such as log/linear
+def sql_iread(db, tag, metatable, encoder=None, batch_size=5):
     """
     Generator that gets its data from a SQL database.
 
@@ -58,8 +69,8 @@ def sql_iread(db, datatable, metatable, encoder=None, batch_size=5):
     assert datatable.isidentifier()
     # using implicit rowid column in (most) SQLite tables.
     random_row_query = f"""
-        SELECT (model, iq) FROM {datatable} WHERE rowid IN
-            (SELECT rowid FROM table ORDER BY RANDOM() LIMIT {batch_size})
+        SELECT (model, iq) FROM {tag} WHERE rowid IN
+            (SELECT rowid FROM tag ORDER BY RANDOM() LIMIT {batch_size})
         """
     ## PostgreSQL supports tablesample
     #random_row_query = f"""
@@ -72,21 +83,32 @@ def sql_iread(db, datatable, metatable, encoder=None, batch_size=5):
             data = cursor.fetchall()
             models, iq = zip(*data)
             # Convert binary blob back into numpy array
-            iq = [np.frombuffer(v, dtype=DB_DTYPE) for v in iq]
+            iq = [asdata(v) for v in iq]
             iq = [np.log10(v) for v in iq]
             encoded = encoder.transform(models)
             categorical = np.asarray(to_categorical(encoded, 64))
             yield iq, categorical
 
-def read_sql(db, datatable):
-    assert datatable.isidentifier()
-    all_rows = f"SELECT model, iq FROM {datatable}"
-    with db, closing(db.cursor()) as cursor:
+def model_counts(db, tag='train'):
+    """
+    Returns {'name': count, ...} for each model appearing in table *tag*.
+    """
+    # Note: Not writing so don't need "with db".
+    with closing(db.cursor()) as cursor:
+        cursor.execute("select model, count(model) from train group by model")
+        counts = cursor.fetchall()
+    return dict(counts)
+
+def read_sql(db, tag='train'):
+    assert tag.isidentifier()
+    all_rows = f"SELECT model, iq FROM {tag}"
+    # Note: Not writing so don't need "with db".
+    with closing(db.cursor()) as cursor:
         cursor.execute(all_rows)
         data = cursor.fetchall()
     model, iq = zip(*data)
     # Convert binary blob back into numpy array
-    iq = [np.frombuffer(v, dtype=DB_DTYPE) for v in iq]
+    iq = [asdata(v) for v in iq]
     return iq, model
 
 def read_1d_parallel(path, tag='train', format='csv', verbose=True):
@@ -129,33 +151,39 @@ def read_1d_serial(path, tag='train', format='csv', verbose=True):
     use :meth:`read_parallel_1d`, except in hyperopt, where map() is broken.
 
     *format* is one of 'json' or 'csv'. JSON mode reads in all and only json
-    files in the folder specified by path. csv mode reads in aggregated data
-    files. See sasmodels/generate_sets.py for more about these formats.
+    files in the folder specified by path. csv mode reads in comma separated
+    data files. See sasmodels/generate_sets.py for more about these formats.
 
     Assumes files contain 1D data.
 
     :param path: Path to the directory of files to read from.
     :param tag: A regex. Only files matching this regex are opened.
-    :param typef: Type of file to read (aggregate data or json data).
+    :param typef: Type of file to read (csv data or json data).
     :param verbose: Controls the verbose of output.
+    """
+    iq, model = zip(*iread_1d(path, tag, format, verbose))
+    return iq, model
+
+def iread_1d(path, tag='train', format='csv', verbose=True):
+    """
+    Read from iterator
     """
     parser = re.compile(f"_{tag}_.*[.]{format}")
     files = (fn+path for fn in os.listdir(path) if parser.search(fn))
     if format == 'json':
-        items = []
         for k, fn in enumerate(files):
-            items.append(_read_json(path+fn))
+            yield _read_json(path+fn)
             if (k % 100 == 0) and verbose:
                 print("Read " + str(k) + " files.")
     elif format == 'csv':
         items = []
         for k, fn in enumerate(files):
-            items.append(_read_csv(path+fn))
+            yield _read_csv(path+fn)
             if (k % 100 == 0) and verbose:
                 print("Read " + str(k) + " files.")
     else:
         print(f"Error: the type {format} was not recognised. Valid types"
-              f" are 'aggr' and 'json'.")
+              f" are 'csv' and 'json'.")
     iq, model = zip(*items)
     return iq, model
 
@@ -187,34 +215,34 @@ class NpEncoder(json.JSONEncoder):
         else:
             return super(NpEncoder, self).default(obj)
 
-def write_sql(db, table, model, items):
+def write_sql(db, model, items, tag='train'):
+    assert tag.isidentifier()
     with db, closing(db.cursor()) as cursor:
         # Check that table exists before writing
         cursor.execute(f"""
             SELECT name FROM sqlite_master
-            WHERE type='table' AND name='{table}'""")
+            WHERE type='table' AND name='{tag}'""")
         result = cursor.fetchall()
         if not result:
             # TODO: Make model+seed the primary key so no duplicates?
             cursor.execute(f"""
-                CREATE TABLE {table} (
+                CREATE TABLE {tag} (
                     model TEXT, seed INTEGER, params TEXT,
                     q BLOB, dq BLOB, iq BLOB, diq BLOB)
                 """)
         # Write entries to the table
         for seed, params, data in items:
             #print("key", model, seed, data[2][:3])
-            q, dq, iq, diq = (np.asarray(v, DB_DTYPE).tobytes() for v in data)
+            q, dq, iq, diq = (asblob(v) for v in data)
             paramstr = json.dumps(params, cls=NpEncoder)
             #paramstr = json.dumps({k: float(v) for k, v in params.items()})
             #disp = lambda x: (print(x),x)[1]
             cursor.execute(f"""
-                INSERT INTO {table} (model, seed, params, q, dq, iq, diq)
+                INSERT INTO {tag} (model, seed, params, q, dq, iq, diq)
                 VALUES ('{model}', {seed}, ?, ?, ?, ?, ?)""",
                 (paramstr, q, dq, iq, diq))
-        db.commit()
 
-def write_1d(dirname, tag, model, items, format='csv'):
+def write_1d(dirname, model, items, tag='train', format='csv'):
     """
     Write a series of *items* for *model* into file *dirname_tag_seed.format*.
 

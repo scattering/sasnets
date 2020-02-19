@@ -9,6 +9,7 @@ directory. See example_data.dat for a sample of the file format used.
 """
 from __future__ import print_function
 
+from copy import deepcopy
 import argparse
 import os
 import resource
@@ -30,7 +31,7 @@ from . import sas_io
 MODELS = sascore.list_models()
 
 # noinspection PyTypeChecker
-def gen_data(model_name, data, index, count=1, noise=2,
+def gen_data(model_name, data, count=1, noise=2,
              mono=True, magnetic=False, cutoff=1e-5,
              maxdim=np.inf, precision='double'):
     r"""
@@ -39,8 +40,6 @@ def gen_data(model_name, data, index, count=1, noise=2,
     *model_name* is the name of the model.
 
     *data* is the data object giving $q, \Delta q$ calculation points.
-
-    *index* is the active set of points.
 
     *N* is the number of comparisons to make.
 
@@ -51,14 +50,15 @@ def gen_data(model_name, data, index, count=1, noise=2,
 
     *precision* is the name of the calculation engine to use.
 
-    Returns list of items::
-        [(seed, {par: value, ...}, (q, dq, iq, diq)), ...]
+    Returns iterator *(seed, pars, data), ...* where *pars* is
+    *{par: value, ...}* and *data* is *(q, dq, iq, diq)*.
     """
     assert data.x.size > 0
     model_info = sascore.load_model_info(model_name)
     calculator = sascomp.make_engine(model_info, data, precision, cutoff)
     default_pars = sascomp.get_pars(model_info)
     assert calculator._data.x.size > 0
+    x, dx = calculator._data.x, calculator._data.dx
 
     # A not very clean macro for evaluating the models, wich uses name and
     # seed from the current scope even though they haven't been defined yet.
@@ -75,17 +75,16 @@ def gen_data(model_name, data, index, count=1, noise=2,
             calculator.simulate_data(noise=noise, **pars)
             assert calculator._data.x.size > 0
             data = calculator._data
-            result = (data.x, data.dx, data.y.copy(), data.dy.copy())
+            result = (x, dx, data.y.copy(), data.dy.copy())
         except Exception:
             traceback.print_exc()
             print(f"Error when generating {model_name} for {seed}")
-            result = (data.x, data.dx, np.NaN*data.y, np.NaN*data.dy)
+            result = (x, dx, np.NaN*x, np.NaN*x)
             #raise
         return result
 
     t0 = -np.inf
     interval = 5
-    items = []
     for k in range(count):
         seed = np.random.randint(int(1e6))
         t1 = time.perf_counter()
@@ -105,10 +104,12 @@ def gen_data(model_name, data, index, count=1, noise=2,
 
         # Evaluate model
         data = simulate(pars) # q, dq, iq, diq
-        items.append((seed, pars, data))
+        # Warning: don't check if data is bad and skip the yield.
+        # If you do then a bad model will be an infinite loop.
+        yield seed, pars, data
 
+    # TODO: can free the calculator now
     print(f"Complete {model_name}")
-    return items
 
 def run_model(opts):
     model = opts.model
@@ -140,16 +141,25 @@ def run_model(opts):
             'accuracy': 'Low', 'view': 'log', 'zero': False,
             })
 
-    # Names for columns of data gotten from simulate
     db = sas_io.sql_connect()
+    # Names for columns of data retrieved from simulate
+    model_counts = sas_io.model_counts(db, tag)
+    #print(model_counts)
+    batch_size = 100
     for model in model_list:
-        items = gen_data(model, data, index, count=count, mono=mono,
-                         cutoff=cutoff, precision=precision, noise=noise)
-        sas_io.write_sql(db, tag, model, items)
-        #sas_io.write_1d(path, tag, model, items)
-    sas_io.read_sql(db, tag)
+        # Figure out how many more entries we need for the model
+        missing = count - model_counts.get(model, 0)
+        # Process the missing entries batch by batch
+        while missing > 0:
+            batch = min(missing, batch_size)
+            missing -= batch
+            # TODO: should _not_ need deepcopy(data) but somethings messing with q
+            items = gen_data(model, deepcopy(data), count=batch, mono=mono,
+                             cutoff=cutoff, precision=precision, noise=noise)
+            sas_io.write_sql(db, model, items, tag=tag)
+            #sas_io.write_1d(path, model, items, tag=tag)
+    #sas_io.read_sql(db, tag)
     db.close()
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -181,7 +191,7 @@ def main():
         "--noise", type=float, default=2,
         help="Constant dI/I uncertainty %.")
     parser.add_argument(
-        "--dimension", choices=['1D', '2D'], default='1D',
+        "--dimension", choices=('1D', '2D'), default='1D',
         help="Choose whether to generate 1D or 2D data.")
     parser.add_argument(
         "--npoint", type=int, default=128,

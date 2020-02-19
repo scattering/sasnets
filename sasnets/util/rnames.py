@@ -1,8 +1,13 @@
 import os
-import re
-import ast
+import argparse
 
-def rnames(path, p="_all_"):
+from .. import sas_io
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--tag", type=str, default="train",
+    help="Tag for the generated data: train or test.")
+def rnames(opts):
     """
     Method to collect all filenames of models from a directory.
 
@@ -19,19 +24,17 @@ def rnames(path, p="_all_"):
     :param p: A regex to match files to.
     :return: None
     """
-    pattern = re.compile(p)
-    l = list()
-    for fn in os.listdir(path):
-        if pattern.search(fn):
-            with open(path + fn, 'r') as fd:
-                print("Reading " + fn)
-                templ = ast.literal_eval(fd.readline().strip())
-                l.append(templ[0])
-    with open(os.path.join(os.path.dirname(path), "name"), "w") as fd:
-        fd.write(str(sorted(l, key=str.lower)) + "\n")
+    models = set()
+    ifiles = sas_io.iread_1d(
+        opts.path, tag=opts.tag, format=opts.format, verbose=opts.verbose)
+    for _, model in ifiles:
+        models.add(model)
+    with open(os.path.join(os.path.dirname(opts.path), "name"), "w") as fd:
+        fd.write(str(sorted(models, key=str.lower)) + "\n")
 
 def main(args):
-    rnames(args[0])
+    opts = parser.parse_args(args)
+    rnames(opts)
 
 if __name__ == '__main__':
     import sys
