@@ -177,8 +177,8 @@ def gen_data(model_name, data, count=1, noise=2,
             pars = sascomp.suppress_magnetism(pars)
         pars.update({'scale': 1, 'background': 1e-5})
         #print(f"{model_name} {seed} {sorted(pars.items())}")
-        parlist = sascomp.parlist(model_info, pars, is2d)
-        print(f"{model_name} {seed} {parlist.replace(os.linesep, ' // ')}")
+        #parlist = sascomp.parlist(model_info, pars, is2d)
+        #print(f"{model_name} {seed} {parlist.replace(os.linesep, ' // ')}")
 
         # Evaluate model
         data = simulate(pars) # q, dq, iq, diq
