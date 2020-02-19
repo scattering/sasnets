@@ -80,14 +80,13 @@ def sql_iread(db, datatable, metatable, encoder=None, batch_size=5):
 
 def read_sql(db, datatable):
     assert datatable.isidentifier()
-    all_rows = f"SELECT model, seed, iq FROM {datatable}"
+    all_rows = f"SELECT model, iq FROM {datatable}"
     with db, closing(db.cursor()) as cursor:
         cursor.execute(all_rows)
         data = cursor.fetchall()
-    model, seed, iq = zip(*data)
+    model, iq = zip(*data)
     # Convert binary blob back into numpy array
     iq = [np.frombuffer(v, dtype=DB_DTYPE) for v in iq]
-    #for a,b,c in zip(model, seed, iq): print("key", a, b, c[:3])
     return iq, model
 
 def read_1d_parallel(path, tag='train', format='csv', verbose=True):

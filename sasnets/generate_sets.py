@@ -30,7 +30,7 @@ from . import sas_io
 MODELS = sascore.list_models()
 
 # noinspection PyTypeChecker
-def gen_data(model_name, data, index, count=1,
+def gen_data(model_name, data, index, count=1, noise=2,
              mono=True, magnetic=False, cutoff=1e-5,
              maxdim=np.inf, precision='double'):
     r"""
@@ -54,13 +54,15 @@ def gen_data(model_name, data, index, count=1,
     Returns list of items::
         [(seed, {par: value, ...}, (q, dq, iq, diq)), ...]
     """
+    assert data.x.size > 0
     model_info = sascore.load_model_info(model_name)
     calculator = sascomp.make_engine(model_info, data, precision, cutoff)
     default_pars = sascomp.get_pars(model_info)
+    assert calculator._data.x.size > 0
 
     # A not very clean macro for evaluating the models, wich uses name and
     # seed from the current scope even though they haven't been defined yet.
-    def exec_model(fn, pars, noise=2):
+    def simulate(pars):
         """
         Generate a random dataset for *fn* evaluated at *pars*.
         Returns *(x, dx, y, dy)*, o.
@@ -69,20 +71,23 @@ def gen_data(model_name, data, index, count=1,
         """
         # TODO: support 2D data, which does not use x, dx, y, dy
         try:
-            fn.simulate_data(noise=noise, **pars)
-            data = fn._data
+            assert calculator._data.x.size > 0
+            calculator.simulate_data(noise=noise, **pars)
+            assert calculator._data.x.size > 0
+            data = calculator._data
             result = (data.x, data.dx, data.y.copy(), data.dy.copy())
         except Exception:
             traceback.print_exc()
             print(f"Error when generating {model_name} for {seed}")
-            result = [np.NaN]*4
+            result = (data.x, data.dx, np.NaN*data.y, np.NaN*data.dy)
+            #raise
         return result
 
     items = []
     for k in range(count):
         seed = np.random.randint(int(1e6))
         if k%100 == 0:
-            print(f"generating {model_name} {k} with seed {seed}")
+            print(f"generating {model_name} {k} of {count} with seed {seed}")
 
         # Generate parameters
         with sascomp.push_seed(seed):
@@ -95,7 +100,7 @@ def gen_data(model_name, data, index, count=1,
         pars.update({'scale': 1, 'background': 1e-5})
 
         # Evaluate model
-        data = exec_model(calculator, pars) # q, dq, iq, diq
+        data = simulate(pars) # q, dq, iq, diq
         items.append((seed, pars, data))
 
     print(f"Complete {model_name}")
@@ -111,6 +116,7 @@ def run_model(opts):
     cutoff = float(opts.cutoff) if not mono else 0
     precision = opts.precision
     res = opts.resolution
+    noise = opts.noise
 
     try:
         model_list = [model] if model in MODELS else sascore.list_models(model)
@@ -124,9 +130,9 @@ def run_model(opts):
         # Fetch q, dq from an actual SANS file
         data, index = sasdata.read(opts.template), None
     else:
-        # Generarte
+        # Generate
         data, index = sascomp.make_data({
-            'qmin': 1e-4, 'qmax': 0.2, 'is2d': is2D, 'nq': nq, 'res': res,
+            'qmin': 1e-4, 'qmax': 0.2, 'is2d': is2D, 'nq': nq, 'res': res/100,
             'accuracy': 'Low', 'view': 'log', 'zero': False,
             })
 
@@ -134,7 +140,7 @@ def run_model(opts):
     db = sas_io.sql_connect()
     for model in model_list:
         items = gen_data(model, data, index, count=count, mono=mono,
-                         cutoff=cutoff, precision=precision)
+                         cutoff=cutoff, precision=precision, noise=noise)
         sas_io.write_sql(db, tag, model, items)
         #sas_io.write_1d(path, tag, model, items)
     sas_io.read_sql(db, tag)
@@ -165,8 +171,11 @@ def main():
         "--template", type=str, default="",
         help="Template file defining q and resolution.")
     parser.add_argument(
-        "--resolution", type=float, default=0.03,
-        help="Constant dQ/Q resolution.")
+        "--resolution", type=float, default=3,
+        help="Constant dQ/Q resolution %.")
+    parser.add_argument(
+        "--noise", type=float, default=2,
+        help="Constant dI/I uncertainty %.")
     parser.add_argument(
         "--dimension", choices=['1D', '2D'], default='1D',
         help="Choose whether to generate 1D or 2D data.")
