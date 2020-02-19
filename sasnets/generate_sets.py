@@ -83,11 +83,15 @@ def gen_data(model_name, data, index, count=1, noise=2,
             #raise
         return result
 
+    t0 = -np.inf
+    interval = 5
     items = []
     for k in range(count):
         seed = np.random.randint(int(1e6))
-        if k%100 == 0:
-            print(f"generating {model_name} {k} of {count} with seed {seed}")
+        t1 = time.perf_counter()
+        if t1 > t0 + interval:
+            print(f"generating {model_name} {k+1} of {count} with seed {seed}")
+            t0 = t1
 
         # Generate parameters
         with sascomp.push_seed(seed):
