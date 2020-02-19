@@ -39,6 +39,18 @@ def sql_connect(dbfile=DB_FILE):
     conn = sqlite3.connect(dbfile)
     return conn
 
+def sql_tables(db):
+    # Check that table exists before writing
+    with closing(db.cursor()) as cursor:
+        result = _get_tables(cursor)
+    print(f"tables: {sorted(result)}")
+    return len(result) > 0
+
+def _get_tables(cursor):
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    return sorted(cursor.fetchall())
+
+
 def asdata(blob):
     return np.frombuffer(blob, dtype=DB_DTYPE)
 
@@ -116,7 +128,7 @@ def read_sql(db, tag='train'):
     # Note: Not writing so don't need "with db".
     with closing(db.cursor()) as cursor:
         if not _table_exists(cursor, tag):
-            return [], []
+            raise ValueError(f"table {tag} doesn't exist: one of {_get_tables(cursor)}.")
         cursor.execute(all_rows)
         data = cursor.fetchall()
     model, iq = zip(*data)
@@ -124,6 +136,42 @@ def read_sql(db, tag='train'):
     iq = [asdata(v) for v in iq]
     return iq, model
 
+def write_sql(db, model, items, tag='train'):
+    assert tag.isidentifier()
+    with db, closing(db.cursor()) as cursor:
+        # Check that table exists before writing
+        if not _table_exists(cursor, tag):
+            # TODO: Make model+seed the primary key so no duplicates?
+            cursor.execute(f"""
+                CREATE TABLE {tag} (
+                    model TEXT, seed INTEGER, params TEXT,
+                    q BLOB, dq BLOB, iq BLOB, diq BLOB)
+                """)
+        # Write entries to the table
+        for seed, params, data in items:
+            #print("key", model, seed, data[2][:3])
+            q, dq, iq, diq = (asblob(v) for v in data)
+            paramstr = json.dumps(params, cls=NpEncoder)
+            #paramstr = json.dumps({k: float(v) for k, v in params.items()})
+            #disp = lambda x: (print(x),x)[1]
+            cursor.execute(f"""
+                INSERT INTO {tag} (model, seed, params, q, dq, iq, diq)
+                VALUES ('{model}', {seed}, ?, ?, ?, ?, ?)""",
+                (paramstr, q, dq, iq, diq))
+
+# Jie Yang https://stackoverflow.com/a/57915246/6195051
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return super(NpEncoder, self).default(obj)
+
+# ======= old method --- data in separate files =====
 def read_1d_parallel(path, tag='train', format='csv', verbose=True):
     """
     Reads all files in the folder path. Opens the files whose names match the
@@ -214,42 +262,6 @@ def _read_json(path):
     with open(path, 'r') as fd:
         data_d = json_load(fd)
         return data_d["data"]["IQ"], data_d["model"]
-
-
-# Jie Yang https://stackoverflow.com/a/57915246/6195051
-class NpEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        elif isinstance(obj, np.floating):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        else:
-            return super(NpEncoder, self).default(obj)
-
-def write_sql(db, model, items, tag='train'):
-    assert tag.isidentifier()
-    with db, closing(db.cursor()) as cursor:
-        # Check that table exists before writing
-        if not _table_exists(cursor, tag):
-            # TODO: Make model+seed the primary key so no duplicates?
-            cursor.execute(f"""
-                CREATE TABLE {tag} (
-                    model TEXT, seed INTEGER, params TEXT,
-                    q BLOB, dq BLOB, iq BLOB, diq BLOB)
-                """)
-        # Write entries to the table
-        for seed, params, data in items:
-            #print("key", model, seed, data[2][:3])
-            q, dq, iq, diq = (asblob(v) for v in data)
-            paramstr = json.dumps(params, cls=NpEncoder)
-            #paramstr = json.dumps({k: float(v) for k, v in params.items()})
-            #disp = lambda x: (print(x),x)[1]
-            cursor.execute(f"""
-                INSERT INTO {tag} (model, seed, params, q, dq, iq, diq)
-                VALUES ('{model}', {seed}, ?, ?, ?, ?, ?)""",
-                (paramstr, q, dq, iq, diq))
 
 def write_1d(dirname, model, items, tag='train', format='csv'):
     """

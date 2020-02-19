@@ -59,14 +59,14 @@ parser.add_argument(
     "--tag", type=str, default="train",
     help="Tag for the generated data: train or test.")
 parser.add_argument(
-    "--count", type=int, default=1000,
-    help="Count is the number of distinct models to generate.")
-parser.add_argument(
     "--database", type=str, default=sas_io.DB_FILE,
     help="Path to the sqlite database file.")
 parser.add_argument(
+    "--count", type=int, default=1000,
+    help="Count is the number of distinct models to generate.")
+parser.add_argument(
     "--template", type=str, default="",
-    help="Template file defining q and resolution.")
+    help="SANS dataset defining q and resolution.")
 parser.add_argument(
     "--resolution", type=float, default=3,
     help="Constant dQ/Q resolution %.")

@@ -17,12 +17,12 @@ import random
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-import keras
-from keras.callbacks import TensorBoard, EarlyStopping
-from keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
+from tensorflow import keras
+from tensorflow.keras.callbacks import TensorBoard, EarlyStopping
+from tensorflow.keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
     MaxPooling1D
-from keras.models import Sequential
-from keras.utils.np_utils import to_categorical
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.utils import to_categorical
 
 # SASNets packages
 from . import sas_io
@@ -31,12 +31,18 @@ from .util.utils import inepath
 # Define the argparser parameters
 parser = argparse.ArgumentParser(
     description="Use neural nets to classify scattering data.")
-parser.add_argument("path", help="Relative or absolute path to a folder "
-                                 "containing data files")
-parser.add_argument("-v", "--verbose", help="Control output verbosity",
-                    action="store_true")
-parser.add_argument("-s", "--save-path",
-                    help="Path to save model weights and info to")
+parser.add_argument(
+    "--tag", type=str, default="train",
+    help="Tag for the generated data: train or test.")
+parser.add_argument(
+    "--database", type=str, default=sas_io.DB_FILE,
+    help="Path to the sqlite database file.")
+parser.add_argument(
+    "-v", "--verbose", action="store_true",
+    help="Control output verbosity")
+parser.add_argument(
+    "-s", "--save-path",
+    help="Path to save model weights and info to")
 
 
 def sql_net(datatable, metatable, verbosity=False, save_path=None,
@@ -119,7 +125,7 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     :return: None.
     """
     vlevel = 1 if verbosity else 0
-    basename = inepath(save_path)
+    #basename = inepath(save_path)
 
     encoder = LabelEncoder()
     encoder.fit(y)
@@ -131,8 +137,9 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     #    raise ValueError("Differing number of categories in train (" + str(
     #        len(set(y))) + ") and test (" + str(len(set(yevl))) + ") data.")
 
-    tb = TensorBoard(log_dir=os.path.dirname(basename), histogram_freq=1)
-    es = EarlyStopping(min_delta=0.005, patience=5, verbose=vlevel)
+    #tb = TensorBoard(log_dir=os.path.dirname(__file__), histogram_freq=1)
+    tb = TensorBoard(log_dir="./tb", histogram_freq=1)
+    #es = EarlyStopping(min_delta=0.005, patience=5, verbose=vlevel)
 
     # Begin model definitions
     model = Sequential()
@@ -158,7 +165,10 @@ def oned_convnet(x, y, xevl=None, yevl=None, random_s=235, verbosity=False,
     if vlevel > 0:
         print(model.summary())
     history = model.fit(xval, yval, batch_size=5, epochs=50, verbose=vlevel,
-                        validation_data=(xtest, ytest), callbacks=[tb, es])
+                        validation_data=(xtest, ytest),
+                        #callbacks=[tb, es],
+                        callbacks=[tb],
+                        )
     score = None
     if xevl is not None and yevl is not None:
         e2 = LabelEncoder()
@@ -231,12 +241,14 @@ def plot_history(history, basename=None):
     with open(basename + ".svg", 'w') as fd:
         plt.savefig(fd, format='svg', bbox_inches='tight')
 
-def read_data(path, pattern='_all_', verbosity=True):
+def read_data(opts):
     time_start = time.perf_counter()
-    q, iq, label, n = sas_io.read_seq_1d(path, pattern=pattern, verbosity=verbosity)
-    time_end = time.perf_counter() - time_start
-    logging.info("File I/O Took " + str(time_end) + " seconds for " + str(n) +
-                 " points of data.")
+    #q, iq, label, n = sas_io.read_1d_seq(opts.path, tag=opts.tag, verbosity=verbosity)
+    db = sas_io.sql_connect(opts.database)
+    iq, label = sas_io.read_sql(db, opts.tag)
+    db.close()
+    time_end = time.perf_counter()
+    logging.info(f"File I/O Took {time_end-time_start} seconds for {len(label)} points of data.")
     return np.asarray(iq), label
 
 def main(args):
@@ -246,13 +258,13 @@ def main(args):
     :param args: Command line args.
     :return: None.
     """
-
-    parsed = parser.parse_args(args)
-    data, label = read_data(parsed.path, verbosity=parsed.verbose)
+    opts = parser.parse_args(args)
+    data, label = read_data(opts)
+    #print(data.shape)
     seed = random.randint(0, 2 ** 32 - 1)
     logging.info(f"Random seed for this iter is {seed}")
     oned_convnet(data, label, None, None, random_s=seed,
-                 verbosity=parsed.verbose, save_path=parsed.save_path)
+                 verbosity=opts.verbose, save_path=opts.save_path)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
