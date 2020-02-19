@@ -45,6 +45,7 @@ def asdata(blob):
 def asblob(data):
     return np.asarray(data, DB_DTYPE).tobytes()
 
+
 # TODO: maybe return interleaved points log10(iq), diq/iq
 # Then we can maybe learn to ignore noise in the data?
 # TODO: generalize to take a set of columns a column to data transform
@@ -95,15 +96,27 @@ def model_counts(db, tag='train'):
     """
     # Note: Not writing so don't need "with db".
     with closing(db.cursor()) as cursor:
-        cursor.execute("select model, count(model) from train group by model")
+        if not _table_exists(cursor, tag):
+            return {}
+        cursor.execute(f"select model, count(model) from {tag} group by model")
         counts = cursor.fetchall()
     return dict(counts)
+
+def _table_exists(cursor, tag):
+    # Check that table exists before writing
+    cursor.execute(f"""
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='{tag}'""")
+    result = cursor.fetchall()
+    return len(result) > 0
 
 def read_sql(db, tag='train'):
     assert tag.isidentifier()
     all_rows = f"SELECT model, iq FROM {tag}"
     # Note: Not writing so don't need "with db".
     with closing(db.cursor()) as cursor:
+        if not _table_exists(cursor, tag):
+            return [], []
         cursor.execute(all_rows)
         data = cursor.fetchall()
     model, iq = zip(*data)
@@ -219,11 +232,7 @@ def write_sql(db, model, items, tag='train'):
     assert tag.isidentifier()
     with db, closing(db.cursor()) as cursor:
         # Check that table exists before writing
-        cursor.execute(f"""
-            SELECT name FROM sqlite_master
-            WHERE type='table' AND name='{tag}'""")
-        result = cursor.fetchall()
-        if not result:
+        if not _table_exists(cursor, tag):
             # TODO: Make model+seed the primary key so no duplicates?
             cursor.execute(f"""
                 CREATE TABLE {tag} (
