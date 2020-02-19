@@ -222,11 +222,12 @@ def main():
         attribute of each model.""")
     parser.add_argument(
         "--precision",
-        choices=['single', 'double', 'fast', 'single!', 'double!', 'quad!'],
-        default='double',
+        choices=['default', 'single', 'double', 'fast', 'single!', 'double!', 'quad!'],
+        default='default',
         help="""
         Precision to use in floating point calculations. If postfixed with
-        an '!', builds a DLL for the CPU.""")
+        an '!', builds a DLL for the CPU. If default, use single unless the
+        model requires double.""")
     parser.add_argument(
         "-v", "--verbose",
         help="Verbose output level.", choices=[0, 1, 2])
