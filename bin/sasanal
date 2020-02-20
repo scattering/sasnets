@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, ROOT)
+
+# Set default program name.
+sys.argv[0] = 'sasanal'
+
+from sasnets.analysis import main
+main(sys.argv[1:])
