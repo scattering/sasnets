@@ -150,6 +150,7 @@ def gen_data(model_name, data, count=1, noise=2,
             calculator.simulate_data(noise=noise, **pars)
             assert calculator._data.x.size > 0
             data = calculator._data
+            # TODO: Do we need to copy? [Yes if data.y is reused.]
             result = (x, dx, data.y.copy(), data.dy.copy())
         except Exception:
             traceback.print_exc()
@@ -157,6 +158,15 @@ def gen_data(model_name, data, count=1, noise=2,
             result = (x, dx, np.NaN*x, np.NaN*x)
             #raise
         return result
+
+    def pretty(pars):
+        """
+        Pretty the parameter set for displaying on one line
+        """
+        parlist = sascomp.parlist(model_info, pars, is2d)
+        parlist = parlist.replace(os.linesep, '  ')
+        parlist = parlist.replace(': ', '=')
+        return parlist
 
     t0 = -np.inf
     interval = 5
@@ -176,14 +186,20 @@ def gen_data(model_name, data, count=1, noise=2,
         if not magnetic:
             pars = sascomp.suppress_magnetism(pars)
         pars.update({'scale': 1, 'background': 1e-5})
-        #print(f"{model_name} {seed} {sorted(pars.items())}")
-        #parlist = sascomp.parlist(model_info, pars, is2d)
-        #print(f"{model_name} {seed} {parlist.replace(os.linesep, ' // ')}")
+        #print(f"{model_name} {seed} {pretty(pars)}")
 
         # Evaluate model
         data = simulate(pars) # q, dq, iq, diq
-        # Warning: don't check if data is bad and skip the yield.
-        # If you do then a bad model will be an infinite loop.
+
+        # Skip data sets with NaN or negative numbers.
+        # Note: some datasets will have fewer entries than others.
+        if np.isnan(data[2]).any():
+            print(f">>> NaN in {model_name} {seed} {pretty(pars)}")
+            continue
+        if (data[2] <= 0.).any():
+            print(f">>> Negative values in {model_name} {seed} {pretty(pars)}")
+            continue
+
         yield seed, pars, data
 
     # TODO: can free the calculator now

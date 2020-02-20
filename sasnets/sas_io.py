@@ -57,12 +57,19 @@ def asdata(blob):
 def asblob(data):
     return np.asarray(data, DB_DTYPE).tobytes()
 
+def input_encoder(iq):
+    """
+    Feature engineering on inputs: scale peak to 1 and take the log.
+    """
+    return np.log10(iq) - np.log10(iq.max())
+
 
 # TODO: maybe return interleaved points log10(iq), diq/iq
 # Then we can maybe learn to ignore noise in the data?
 # TODO: generalize to take a set of columns a column to data transform
 # Either that or give a choice amongst standard transforms, such as log/linear
-def iread_sql(db, tag, metatable, encoder=lambda y: y, batch_size=5):
+def iread_sql(db, tag, metatable, batch_size=5,
+              encoder=lambda y: y, input_encoder=input_encoder):
     """
     Generator that gets its data from a SQL database.
 
@@ -71,9 +78,13 @@ def iread_sql(db, tag, metatable, encoder=lambda y: y, batch_size=5):
 
     Data is chosen at random with replacement and runs forever.
 
+    Note: batches may be different sizes if some datasets contain NaN.
+    It would be better to strip these at the source...
+
     :param db: The SQL database connection.
     :param datatable: The data table name to connect to.
     :param encoder: *encoder(label)* converts model name to target encoding.
+    :param input_encoder: *input_encoder(iq)* scale and transform iq
     """
     # Build query string, checking values before substituting
     batch_size = int(batch_size) # force integer
@@ -95,7 +106,8 @@ def iread_sql(db, tag, metatable, encoder=lambda y: y, batch_size=5):
             label, iq = zip(*data)
             # Convert binary blob back into numpy array
             iq = [asdata(v) for v in iq]
-            iq = [np.log10(v) for v in iq]
+            if input_encoder is not None:
+                iq = [input_encoder(v) for v in iq]
             yield iq, encoder(label)
 
 def model_counts(db, tag='train'):
@@ -118,7 +130,7 @@ def _table_exists(cursor, tag):
     result = cursor.fetchall()
     return len(result) > 0
 
-def read_sql(db, tag='train', keep_nan=False):
+def read_sql(db, tag='train', input_encoder=input_encoder):
     assert tag.isidentifier()
     all_rows = f"SELECT model, iq FROM {tag}"
     # Note: Not writing so don't need "with db".
@@ -130,13 +142,8 @@ def read_sql(db, tag='train', keep_nan=False):
     label, iq = zip(*data)
     # Convert binary blob back into numpy array
     iq = [asdata(v) for v in iq]
-    # TODO: better to not write NaN values in the first place
-    # strip rows with nan
-    if not keep_nan:
-        iq = np.asarray(iq)
-        index = ~np.isnan(np.sum(iq, axis=1))
-        iq = iq[index]
-        label = [name for present, name in zip(index, label) if present]
+    if input_encoder is not None:
+        iq = [input_encoder(v) for v in iq]
     return iq, label
 
 def read_sql_all(db, tag='train'):

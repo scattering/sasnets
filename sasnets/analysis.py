@@ -252,13 +252,14 @@ def main(args):
     opts = parser.parse_args(args)
     db = sas_io.sql_connect(opts.database)
     labels, q, dq, iq, diq = sas_io.read_sql_all(db)
+    log_iq = [sas_io.input_encoder(v) for v in iq]
     categories = sorted(set(labels))
     classifier = reload_net(opts.model_file)
     if opts.classify:
-        # plot_tSNE(classifier, iq, categories)
-        plot_dendrogram(classifier, iq, labels, categories)
+        # plot_tSNE(classifier, logiq, categories)
+        plot_dendrogram(classifier, log_iq, labels, categories)
     else:
-        failures = predict_and_val(classifier, iq, labels, categories)
+        failures = predict_and_val(classifier, log_iq, labels, categories)
         plot_failures(failures, q, iq)
 
 if __name__ == '__main__':
