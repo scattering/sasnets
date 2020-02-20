@@ -30,10 +30,3 @@ Basic flow:
     python -m sasnets.analysis
     # Show dendrogram
     python -m sasnets.analysis -c
-
-
-**TODOS**
-
-* don't save q, dq with every dataset
-* use hdf5 rather than sqlite
-* allow training to resume on a dataset

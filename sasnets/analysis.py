@@ -27,7 +27,7 @@ except ImportError:
     #warnings.warn("Using numpy since bottleneck isn't available")
 
 from . import sas_io
-from .sasnet import OnehotEncoder, fix_dims
+from .sasnet import OnehotEncoder, fix_dims, reload_net
 
 def columnize(items):
     try:
@@ -40,7 +40,7 @@ parser = argparse.ArgumentParser(
     description="Test a previously trained neural network, or use it to "
                 "classify new data.")
 parser.add_argument(
-    "model_file",
+    "model_file", default="savenet/out.h5",
     help="""
         Path to h5 model file from sasnet.py. The directory
         should also contain a 'name' file containing a list
@@ -53,16 +53,6 @@ parser.add_argument("-c", "--classify", action="store_true",
 parser.add_argument(
     "--database", type=str, default=sas_io.DB_FILE,
     help="Path to the sqlite database file.")
-
-
-def reload_net(path):
-    """
-    Loads a classifier saved by sasnets from *path*.
-
-    :param path: Relative or absolute path to the .h5 model file
-    :return: The loaded classifier.
-    """
-    return keras.models.load_model(os.path.normpath(path))
 
 
 def predict_and_val(classifier, x, y, categories):

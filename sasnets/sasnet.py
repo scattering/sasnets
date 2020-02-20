@@ -60,6 +60,13 @@ parser.add_argument(
     "-v", "--verbose", action="store_true",
     help="Control output verbosity")
 parser.add_argument(
+    "-r", "--resume", action='store_true', dest='resume',
+    help="resume fit stored in --save-path")
+parser.add_argument(
+    "--noresume", action='store_false', dest='resume',
+    help="don't resume fit stored in --save-path")
+parser.set_defaults(feature=True)
+parser.add_argument(
     "-s", "--save-path", default="./savenet/out",
     help="Path to save model weights and info to")
 
@@ -100,6 +107,14 @@ def fix_dims(*args):
         return fixer(args[0])
     return (fixer(v) for v in args)
 
+def reload_net(path):
+    """
+    Loads a classifier saved by sasnets from *path*.
+
+    :param path: Relative or absolute path to the .h5 model file
+    :return: The loaded classifier.
+    """
+    return keras.models.load_model(os.path.normpath(path))
 
 def save_output(save_path, model, encoder, history, seed, score):
     # Create output directory.
@@ -205,6 +220,7 @@ def oned_convnet(opts, x, y, test=None, seed=235):
 
     # We need to poke an extra dimension into our input data for some reason.
     xtrain, xval = fix_dims(xtrain, xval)
+    nq, nlabels = x.shape[1], len(categories)
 
     # Check that the validation data covers all the categories
     #if categories != sorted(set(ytrain)):
@@ -219,29 +235,31 @@ def oned_convnet(opts, x, y, test=None, seed=235):
     #    basename+".h5", monitor='loss', verbose=verbose,
     #    save_best_only=True, mode='min')
 
-    # Begin model definitions
-    nq, nlabels = x.shape[1], len(categories)
-    model = Sequential()
-    #model.add(Embedding(4000, 128, input_length=x.shape[1]))
-    model.add(InputLayer(input_shape=(nq,1)))
-    model.add(Conv1D(nq, kernel_size=6, activation='relu'))
-    model.add(MaxPooling1D(pool_size=4))
-    model.add(Dropout(.17676))
-    model.add(Conv1D(nq//2, kernel_size=6, activation='relu'))
-    model.add(MaxPooling1D(pool_size=4))
-    model.add(Dropout(.20782))
-    model.add(Flatten())
-    model.add(Dense(nq//4, activation='tanh'))
-    model.add(Dropout(.20582))
-    model.add(Dense(nlabels, activation='softmax'))
-    loss = ('binary_crossentropy' if nlabels == 2
-            else 'categorical_crossentropy')
-    model.compile(loss=loss, optimizer=keras.optimizers.Adadelta(),
-                  metrics=['accuracy'])
-
-    # Model Run
+    if opts.resume:
+        model = reload_net(inepath(opts.save_path)+'.h5')
+    else:
+        # Begin model definitions
+        model = Sequential()
+        #model.add(Embedding(4000, 128, input_length=x.shape[1]))
+        model.add(InputLayer(input_shape=(nq,1)))
+        model.add(Conv1D(nq, kernel_size=6, activation='relu'))
+        model.add(MaxPooling1D(pool_size=4))
+        model.add(Dropout(.17676))
+        model.add(Conv1D(nq//2, kernel_size=6, activation='relu'))
+        model.add(MaxPooling1D(pool_size=4))
+        model.add(Dropout(.20782))
+        model.add(Flatten())
+        model.add(Dense(nq//4, activation='tanh'))
+        model.add(Dropout(.20582))
+        model.add(Dense(nlabels, activation='softmax'))
+        loss = ('binary_crossentropy' if nlabels == 2
+                else 'categorical_crossentropy')
+        model.compile(loss=loss, optimizer=keras.optimizers.Adadelta(),
+                    metrics=['accuracy'])
     if verbose > 0:
         print(model.summary())
+
+    # Model Run
     history = model.fit(
         xtrain, ytrain, batch_size=opts.batch,
         steps_per_epoch=opts.steps, epochs=opts.epochs,

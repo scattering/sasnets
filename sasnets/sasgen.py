@@ -6,6 +6,11 @@ modified version of compare_multi.py.
 The program writes datafiles as result_<modelname>_<run_number> to the out/
 directory. See example_data.dat for a sample of the file format used.
 
+**TODOS**
+
+* don't save q, dq with every dataset
+* use hdf5 rather than sqlite
+
 """
 from __future__ import print_function
 
