@@ -45,7 +45,7 @@ parser.add_argument(
     "--database", type=str, default=sas_io.DB_FILE,
     help="Path to the sqlite database file.")
 parser.add_argument(
-    "--steps", type=int, default=20000,
+    "--steps", type=int, default=None,
     help="Number of steps per epochs.")
 parser.add_argument(
     "--epochs", type=int, default=50,
@@ -53,6 +53,9 @@ parser.add_argument(
 parser.add_argument(
     "--batch", type=int, default=5,
     help="Batch size.")
+parser.add_argument(
+    "--tensorboard", type=str, default="tensorboard",
+    help="Tensorboard directory.")
 parser.add_argument(
     "-v", "--verbose", action="store_true",
     help="Control output verbosity")
@@ -71,6 +74,10 @@ class OnehotEncoder:
 
     def index(self, y):
         return self.label_encoder.transform(y)
+
+    def label(self, index):
+        return self.label_encoder.inverse_transform(index)
+
 
 def fix_dims(*args):
     """
@@ -120,23 +127,30 @@ def sql_net(opts):
     db = sas_io.sql_connect(opts.database)
     counts = model_counts(db, tag=opts.train)
     encoder = OnehotEncoder(counts.keys())
+    train_seq = sas_io.iread_sql(
+        db, opts.train, encoder=encoder, batch_size=opts.batch)
+    validation_seq = sas_io.iread_sql(
+        db, opts.validation, encoder=encoder, batch_size=opts.batch)
 
-    tb = TensorBoard(log_dir=os.path.dirname(basename), histogram_freq=1)
+    # Grab some training data so we can see how big it is
+    x, y = next(train_seq)
+
+    tb = TensorBoard(log_dir=opts.tensorboard, histogram_freq=1)
     es = EarlyStopping(min_delta=0.001, patience=15, verbose=verbose)
 
     # Begin model definitions
+    nq = len(x[0])
     model = Sequential()
-    model.add(
-        Conv1D(256, kernel_size=8, activation='relu', input_shape=[267, 2]))
+    model.add(Conv1D(nq, kernel_size=8, activation='relu', input_shape=[nq, 1]))
     model.add(MaxPooling1D(pool_size=4))
     model.add(Dropout(.17676))
-    model.add(Conv1D(256, kernel_size=6, activation='relu'))
+    model.add(Conv1D(nq//2, kernel_size=6, activation='relu'))
     model.add(MaxPooling1D(pool_size=3))
     model.add(Dropout(.20782))
     model.add(Flatten())
-    model.add(Dense(64, activation='tanh'))
+    model.add(Dense(nq//4, activation='tanh'))
     model.add(Dropout(.20582))
-    model.add(Dense(64, activation='softmax'))
+    model.add(Dense(nq//4, activation='softmax'))
     model.compile(loss="categorical_crossentropy",
                   optimizer=keras.optimizers.Adadelta(),
                   metrics=['accuracy'])
@@ -144,12 +158,8 @@ def sql_net(opts):
     # Model Run
     if verbose > 0:
         print(model.summary())
-    train_seq = sas_io.iread_sql(
-        db, opts.train, encoder=encoder, batch_size=opts.batch)
-    validation_seq = sas_io.iread_sql(
-        db, opts.validation, encoder=encoder, batch_size=opts.batch)
     history = model.fit_generator(
-        train_seq, opts.steps, epochs=opts.epochs,
+        train_seq, steps_per_epoch=opts.steps, epochs=opts.epochs,
         workers=1, verbose=verbose, validation_data=validation_seq,
         max_queue_size=1, callbacks=[tb, es])
 
@@ -169,8 +179,7 @@ def sql_net(opts):
     logging.info("Complete.")
 
 
-def oned_convnet(x, y, test=None, seed=235, verbose=False,
-                 save_path=None):
+def oned_convnet(opts, x, y, test=None, seed=235):
     """
     Runs a 1D convolutional classification neural net on the input data x and y.
 
@@ -183,17 +192,16 @@ def oned_convnet(x, y, test=None, seed=235, verbose=False,
     :param save_path: The path to save the model to. If it points to a directory, writes to a file named the current unix time. If it points to a file, the file is overwritten.
     :return: None.
     """
-    verbose = 1 if verbose else 0
-
-    batch_size = 5
+    verbose = 1 if opts.verbose else 0
 
     # 1-hot encoding.
     categories = sorted(set(y))
     encoder = OnehotEncoder(categories)
 
     # Split data into train and validation.
+    test_size = float(opts.validation)/100
     xtrain, xval, ytrain, yval = train_test_split(
-        x, encoder(y), test_size=.25, random_state=seed)
+        x, encoder(y), test_size=test_size, random_state=seed)
 
     # We need to poke an extra dimension into our input data for some reason.
     xtrain, xval = fix_dims(xtrain, xval)
@@ -204,24 +212,29 @@ def oned_convnet(x, y, test=None, seed=235, verbose=False,
     #if categories != sorted(set(yval)):
     #    raise ValueError("Test data is missing categories.")
 
-    tb = TensorBoard(log_dir="./tensorboard", histogram_freq=1)
+    tb = TensorBoard(log_dir=opts.tensorboard, histogram_freq=1)
     #es = EarlyStopping(min_delta=0.005, patience=5, verbose=verbose)
+    #basename = inepath(opts.save_path)
+    #checkpoint = ModelCheckpoint(
+    #    basename+".h5", monitor='loss', verbose=verbose,
+    #    save_best_only=True, mode='min')
 
     # Begin model definitions
+    nq, nlabels = x.shape[1], len(categories)
     model = Sequential()
     #model.add(Embedding(4000, 128, input_length=x.shape[1]))
-    model.add(InputLayer(input_shape=(x.shape[1],1)))
-    model.add(Conv1D(128, kernel_size=6, activation='relu'))
+    model.add(InputLayer(input_shape=(nq,1)))
+    model.add(Conv1D(nq, kernel_size=6, activation='relu'))
     model.add(MaxPooling1D(pool_size=4))
     model.add(Dropout(.17676))
-    model.add(Conv1D(64, kernel_size=6, activation='relu'))
+    model.add(Conv1D(nq//2, kernel_size=6, activation='relu'))
     model.add(MaxPooling1D(pool_size=4))
     model.add(Dropout(.20782))
     model.add(Flatten())
-    model.add(Dense(32, activation='tanh'))
+    model.add(Dense(nq//4, activation='tanh'))
     model.add(Dropout(.20582))
-    model.add(Dense(len(categories), activation='softmax'))
-    loss = ('binary_crossentropy' if len(categories) == 2
+    model.add(Dense(nlabels, activation='softmax'))
+    loss = ('binary_crossentropy' if nlabels == 2
             else 'categorical_crossentropy')
     model.compile(loss=loss, optimizer=keras.optimizers.Adadelta(),
                   metrics=['accuracy'])
@@ -230,9 +243,10 @@ def oned_convnet(x, y, test=None, seed=235, verbose=False,
     if verbose > 0:
         print(model.summary())
     history = model.fit(
-        xtrain, ytrain, batch_size=batch_size, epochs=2,
+        xtrain, ytrain, batch_size=opts.batch,
+        steps_per_epoch=opts.steps, epochs=opts.epochs,
         verbose=verbose, validation_data=(xval, yval),
-        #callbacks=[tb, es],
+        #callbacks=[tb, es, checkpoint],
         callbacks=[tb],
         )
 
@@ -246,7 +260,7 @@ def oned_convnet(x, y, test=None, seed=235, verbose=False,
         print('Test accuracy:', score[1])
 
     save_output(
-        save_path=save_path,
+        save_path=opts.save_path,
         model=model,
         encoder=encoder,
         history=history,
@@ -327,8 +341,7 @@ def main(args):
     #print(data.shape)
     seed = random.randint(0, 2 ** 32 - 1)
     logging.info(f"Random seed for this iter is {seed}")
-    oned_convnet(data, label, seed=seed,
-                 verbose=opts.verbose, save_path=opts.save_path)
+    oned_convnet(opts, data, label, seed=seed)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)

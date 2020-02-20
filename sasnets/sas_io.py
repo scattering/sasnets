@@ -73,7 +73,7 @@ def iread_sql(db, tag, metatable, encoder=lambda y: y, batch_size=5):
 
     :param db: The SQL database connection.
     :param datatable: The data table name to connect to.
-    :param encoder: *encoder(model)* converts model name to target encoding.
+    :param encoder: *encoder(label)* converts model name to target encoding.
     """
     # Build query string, checking values before substituting
     batch_size = int(batch_size) # force integer
@@ -92,11 +92,11 @@ def iread_sql(db, tag, metatable, encoder=lambda y: y, batch_size=5):
         while True:
             cursor.execute(random_row_query)
             data = cursor.fetchall()
-            models, iq = zip(*data)
+            label, iq = zip(*data)
             # Convert binary blob back into numpy array
             iq = [asdata(v) for v in iq]
             iq = [np.log10(v) for v in iq]
-            yield iq, encoder(models)
+            yield iq, encoder(label)
 
 def model_counts(db, tag='train'):
     """
@@ -118,7 +118,7 @@ def _table_exists(cursor, tag):
     result = cursor.fetchall()
     return len(result) > 0
 
-def read_sql(db, tag='train'):
+def read_sql(db, tag='train', keep_nan=False):
     assert tag.isidentifier()
     all_rows = f"SELECT model, iq FROM {tag}"
     # Note: Not writing so don't need "with db".
@@ -127,10 +127,17 @@ def read_sql(db, tag='train'):
             raise ValueError(f"table {tag} doesn't exist: one of {_get_tables(cursor)}.")
         cursor.execute(all_rows)
         data = cursor.fetchall()
-    model, iq = zip(*data)
+    label, iq = zip(*data)
     # Convert binary blob back into numpy array
     iq = [asdata(v) for v in iq]
-    return iq, model
+    # TODO: better to not write NaN values in the first place
+    # strip rows with nan
+    if not keep_nan:
+        iq = np.asarray(iq)
+        index = ~np.isnan(np.sum(iq, axis=1))
+        iq = iq[index]
+        label = [name for present, name in zip(index, label) if present]
+    return iq, label
 
 def read_sql_all(db, tag='train'):
     assert tag.isidentifier()
@@ -141,17 +148,17 @@ def read_sql_all(db, tag='train'):
             raise ValueError(f"table {tag} doesn't exist: one of {_get_tables(cursor)}.")
         cursor.execute(all_rows)
         data = cursor.fetchall()
-    model, *columns = zip(*data)
+    label, *columns = zip(*data)
     # Convert binary blob back into numpy array
     columns = [[asdata(v) for v in col] for col in columns]
-    return [model] + columns
+    return [label] + columns
 
-def write_sql(db, model, items, tag='train'):
+def write_sql(db, label, items, tag='train'):
     assert tag.isidentifier()
     with db, closing(db.cursor()) as cursor:
         # Check that table exists before writing
         if not _table_exists(cursor, tag):
-            # TODO: Make model+seed the primary key so no duplicates?
+            # TODO: Make label+seed the primary key so no duplicates?
             cursor.execute(f"""
                 CREATE TABLE {tag} (
                     model TEXT, seed INTEGER, params TEXT,
@@ -159,14 +166,14 @@ def write_sql(db, model, items, tag='train'):
                 """)
         # Write entries to the table
         for seed, params, data in items:
-            #print("key", model, seed, data[2][:3])
+            #print("key", label, seed, data[2][:3])
             q, dq, iq, diq = (asblob(v) for v in data)
             paramstr = json.dumps(params, cls=NpEncoder)
             #paramstr = json.dumps({k: float(v) for k, v in params.items()})
             #disp = lambda x: (print(x),x)[1]
             cursor.execute(f"""
                 INSERT INTO {tag} (model, seed, params, q, dq, iq, diq)
-                VALUES ('{model}', {seed}, ?, ?, ?, ?, ?)""",
+                VALUES ('{label}', {seed}, ?, ?, ?, ?, ?)""",
                 (paramstr, q, dq, iq, diq))
 
 # Jie Yang https://stackoverflow.com/a/57915246/6195051
@@ -217,7 +224,7 @@ def read_1d_parallel(path, tag='train', format='csv', verbose=True):
 def read_1d_serial(path, tag='train', format='csv', verbose=True):
     """
     Reads all files in the folder path. Opens the files whose names match the
-    regex pattern. Returns lists of I(Q), and model. Path can be a
+    regex pattern. Returns lists of I(Q), and label. Path can be a
     relative or absolute path. Uses a single thread only. It is recommended to
     use :meth:`read_parallel_1d`, except in hyperopt, where map() is broken.
 
@@ -232,8 +239,8 @@ def read_1d_serial(path, tag='train', format='csv', verbose=True):
     :param typef: Type of file to read (csv data or json data).
     :param verbose: Controls the verbose of output.
     """
-    iq, model = zip(*iread_1d(path, tag, format, verbose))
-    return iq, model
+    iq, label = zip(*iread_1d(path, tag, format, verbose))
+    return iq, label
 
 def iread_1d(path, tag='train', format='csv', verbose=True):
     """
@@ -255,31 +262,31 @@ def iread_1d(path, tag='train', format='csv', verbose=True):
     else:
         print(f"Error: the type {format} was not recognised. Valid types"
               f" are 'csv' and 'json'.")
-    iq, model = zip(*items)
-    return iq, model
+    iq, label = zip(*items)
+    return iq, label
 
 def _read_csv(path):
     with open(path, 'r') as fd:
         logging.info("Reading " + path)
-        model = ast.literal_eval(fd.readline().strip())[0]
+        label = ast.literal_eval(fd.readline().strip())[0]
         fd.readline() # q
         fd.readline() # dq
         iq = ast.literal_eval(fd.readline().strip())
         #fd.readline() # iq
-        return iq, model
+        return iq, label
 
 def _read_json(path):
     with open(path, 'r') as fd:
         data_d = json_load(fd)
         return data_d["data"]["IQ"], data_d["model"]
 
-def write_1d(dirname, model, items, tag='train', format='csv'):
+def write_1d(dirname, label, items, tag='train', format='csv'):
     """
-    Write a series of *items* for *model* into file *dirname_tag_seed.format*.
+    Write a series of *items* for *label* into file *dirname_tag_seed.format*.
 
     *tag* is the name of the group, such as 'trial' or 'validate'.
 
-    *model* is the model name.
+    *label* is the model name.
 
     *items* is a sequence *[(seed, params, (q, dq, iq, diq)), ...]*.
 
@@ -288,15 +295,15 @@ def write_1d(dirname, model, items, tag='train', format='csv'):
     assert format in ('csv', 'json')
     writer = _write_csv if format == 'csv' else _write_json
     for seed, params, data in items:
-        filename = f"{model}_{tag}_{seed}.{format}"
+        filename = f"{label}_{tag}_{seed}.{format}"
         path = os.path.join(dirname, filename)
         logging.info("Writing " + path)
-        writer(path, model, seed, params, data)
+        writer(path, label, seed, params, data)
 
-def _write_csv(path, model, seed, params, data):
+def _write_csv(path, label, seed, params, data):
     with open(path, 'w') as fd:
-        # First line contains model, seed, par, val, par, val, ...
-        line = (model, seed) + (s for pair in params.items() for s in pair)
+        # First line contains label, seed, par, val, par, val, ...
+        line = (label, seed) + (s for pair in params.items() for s in pair)
         fd.write(",".join(repr(v) for v in line))
         fd.write("\n")
         # Subsequent lines contain data q, dq, iq, diq
@@ -304,11 +311,11 @@ def _write_csv(path, model, seed, params, data):
             fd.write(",".join(repr(v) for v in line))
             fd.write("\n")
 
-def _write_json(path, model, seed, params, data):
+def _write_json(path, label, seed, params, data):
     with open(path, 'w') as fd:
         q, dq, iq, diq = data
         data = {'Q': q, 'dQ': dq, 'IQ': iq, 'dIQ': diq}
-        value = {'model': model, 'seed': seed, 'params': params, 'data': data}
+        value = {'model': label, 'seed': seed, 'params': params, 'data': data}
         json.dump(fd, value, cls=NpEncoder)
 
 

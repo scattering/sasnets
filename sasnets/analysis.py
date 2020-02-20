@@ -82,10 +82,14 @@ def predict_and_val(classifier, x, y, categories):
     errors = []
     for k, (prob, actual) in enumerate(zip(prediction, y)):
         mle = prob.argmax(axis=-1)
-        predicted = categories[mle]
+        predicted = encoder.label([mle])[0]
         if predicted != actual:
             actual_index = encoder.index([actual])[0]
-            ratio = prob[actual_index] / prob[mle]
+            try:
+                ratio = prob[actual_index] / prob[mle]
+            except IndexError:
+                print(actual, actual_index, mle, predicted, len(categories), prob)
+                raise
             if len(errors) == 20:
                 print("...")
             if len(errors) < 20:
@@ -110,11 +114,11 @@ def show_predictions(classifier, x, y, categories, rank=5):
     encoder = OnehotEncoder(categories)
     prediction = classifier.predict(fix_dims(x))
     target = (lambda k: f"{k}") if y is None else (lambda k: f"{k}({y[k]})")
-    for k, p in enumerate(prediction):
+    for k, prob in enumerate(prediction):
         pt = argpartition(p, rank)[-rank:]
-        plist = pt[np.argsort(p[pt])]
-        labels = encoder.inverse_transform(plist)
-        values = p[plist]
+        plist = pt[np.argsort(prob[pt])]
+        labels = encoder.label(plist)
+        values = prob[plist]
         print(f"{target(k)} => ", end="")
         for k, v in reversed(zip(labels, values)):
             print(f"{k}:{v:.3} ", end="")
@@ -135,8 +139,8 @@ def confusion_matrix(classifier, x, y, categories):
     n = len(categories)
     res = np.zeros((n, n))
     weight = np.zeros(n)
-    for k, (p, row) in enumerate(zip(prediction, index)):
-        mle = nanargmax(p)
+    for k, (prob, row) in enumerate(zip(prediction, index)):
+        mle = nanargmax(prob)
         res[row][mle] += 1
         weight[row] += 1
     return res/weight[:, None] # TODO: divide row or column?
@@ -152,8 +156,8 @@ def rpredict(classifier, x, categories):
     """
     encoder = OnehotEncoder(categories)
     prediction = classifier.predict(fix_dims(x), verbose=1)
-    index = [nanargmax(p) for p in prediction]
-    label = encoder.label_encoder.inverse_transform(index)
+    index = [nanargmax(prob) for prob in prediction]
+    label = encoder.label(index)
     return label.tolist()
 
 
