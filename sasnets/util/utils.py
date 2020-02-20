@@ -39,3 +39,17 @@ def inepath(pathname):
         else:
             return sp
     return None
+
+def columnize(items, indent=""):
+    try:
+        from columnize import columnize as _columnize, default_opts
+        return _columnize(list(items), default_opts['displaywidth'],
+                          lineprefix=indent)
+    except ImportError:
+        pass
+    try:
+        from sasmodels.compare import columnize as _columnize
+        return _columnize(items, indent=indent)
+    except ImportError:
+        pass
+    return "\n".join(items)

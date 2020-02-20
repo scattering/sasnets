@@ -28,13 +28,7 @@ except ImportError:
 
 from . import sas_io
 from .sasnet import OnehotEncoder, fix_dims, reload_net
-
-def columnize(items):
-    try:
-        from columnize import columnize as _columnize, default_opts
-        return _columnize(list(items), default_opts['displaywidth'])
-    except ImportError:
-        return "\n".join(items)
+from .util.utils import columnize
 
 parser = argparse.ArgumentParser(
     description="Test a previously trained neural network, or use it to "

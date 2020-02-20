@@ -24,6 +24,7 @@ import traceback
 from collections import OrderedDict, namedtuple
 import sqlite3
 import logging
+import fnmatch
 
 import numpy as np  # type: ignore
 
@@ -32,6 +33,7 @@ from sasmodels import compare as sascomp
 from sasmodels import data as sasdata
 
 from . import sas_io
+from .util.utils import columnize
 
 MODELS = sascore.list_models()
 
@@ -51,18 +53,18 @@ def str2bool(value):
         raise argparse.ArgumentTypeError('Boolean value (1/0, Y[es]/N[o], T[rue]/F[alse]) expected.')
 
 parser = argparse.ArgumentParser(
-    prog=__file__,
     description="""
     A script that generates SANS datasets for use in neural network training.""")
 parser.add_argument(
-    "model",
-    help=f"""
-    model is the model name of the model or one of the model types
-    listed in sasmodels.core.list_models {sascore.KINDS}. Model types can be
-    combined, such as 2d+single.""")
+    "models", nargs='*',
+    help=f"A list of models or kinds ({', '.join(sascore.KINDS)})."
+         f" A pattern such as *sphere will select all sphere models.")
+parser.add_argument(
+    "-x", "--exclude", type=str, default="",
+    help="Exclude specific models separated by commas.")
 parser.add_argument(
     "--tag", type=str, default="train",
-    help="Tag for the generated data: train or test.")
+    help="Tag for the generated data: train, test or validate.")
 parser.add_argument(
     "--database", type=str, default=sas_io.DB_FILE,
     help="Path to the sqlite database file.")
@@ -74,10 +76,10 @@ parser.add_argument(
     help="SANS dataset defining q and resolution.")
 parser.add_argument(
     "--resolution", type=float, default=3,
-    help="Constant dQ/Q resolution %.")
+    help="Constant dQ/Q resolution percentage.")
 parser.add_argument(
     "--noise", type=float, default=2,
-    help="Constant dI/I uncertainty %.")
+    help="Constant dI/I uncertainty percentage.")
 parser.add_argument(
     "--dimension", choices=('1D', '2D'), default='1D',
     help="Choose whether to generate 1D or 2D data.")
@@ -91,15 +93,13 @@ parser.add_argument(
     "--magnetic", type=str2bool, default=False,
     help="Allow magnetic parameters in the model")
 parser.add_argument(
-    "--cutoff",
-    type=float, default=0.,
+    "--cutoff", type=float, default=0.,
     help="""
     CUTOFF is the cutoff value to use for the polydisperse distribution.
     Weights below the cutoff will be ignored.""")
 parser.add_argument(
-    "--precision",
+    "--precision", default='default',
     choices=['default', 'single', 'double', 'fast', 'single!', 'double!', 'quad!'],
-    default='default',
     help="""
     Precision to use in floating point calculations. If postfixed with
     an '!', builds a DLL for the CPU. If default, use single unless the
@@ -210,8 +210,38 @@ def gen_data(model_name, data, count=1, noise=2,
     # TODO: can free the calculator now
     print(f"Complete {model_name}")
 
+def model_group(models, required=False):
+    """
+    Build a list of models from the items in *models*.  Could be individual
+    model names or could be a unix-style glob pattern.
+    """
+    good = []
+    bad = []
+    for name in models:
+        if name == "":
+            continue
+        items = fnmatch.filter(MODELS, name)
+        if not items:
+            try:
+                items = sascore.list_models(name)
+            except ValueError:
+                pass
+        if items:
+            good.extend(items)
+        else:
+            bad.append(name)
+
+    if bad:
+        print(f"Bad model(s): {', '.join(bad)}.  ", file=sys.stderr)
+    if bad or (required and not good):
+        print(f"Use kind ({', '.join(sascore.KINDS)}) or one of:", file=sys.stderr)
+        print(columnize(MODELS, indent="  "), file=sys.stderr, end='')
+        print(f"Patterns such as *sphere will also work.")
+        sys.exit(1)
+
+    return sorted(set(good))
+
 def run_model(opts):
-    model = opts.model
     tag = opts.tag
     count = opts.count
     is2D = opts.dimension.startswith('2d')
@@ -223,13 +253,11 @@ def run_model(opts):
     res = opts.resolution
     noise = opts.noise
 
-    try:
-        model_list = [model] if model in MODELS else sascore.list_models(model)
-    except ValueError:
-        print(f'Bad model {model}.  Use model type or one of:', file=sys.stderr)
-        sascomp.print_models()
-        print(f'model types: {sascore.KINDS}')
-        return
+    # Figure out which models we are using.
+    include = model_group(opts.models, required=True)
+    exclude = model_group(opts.exclude.split(','))
+    model_list = sorted(set(include)-set(exclude))
+    print("Selected models:\n", columnize(model_list, indent="  "))
 
     if opts.template:
         # Fetch q, dq from an actual SANS file
@@ -264,7 +292,7 @@ def run_model(opts):
 
 def chunk(seq, batch_size):
     """
-    Chunk sequence in groups of *batch_size*.
+    Generic iter tool: chunk sequence in groups of *batch_size*.
 
     Remaining items are returned in final group.
     """
