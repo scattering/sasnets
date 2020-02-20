@@ -62,21 +62,19 @@ def asblob(data):
 # Then we can maybe learn to ignore noise in the data?
 # TODO: generalize to take a set of columns a column to data transform
 # Either that or give a choice amongst standard transforms, such as log/linear
-def iread_sql(db, tag, metatable, encoder=None, batch_size=5):
+def iread_sql(db, tag, metatable, encoder=lambda y: y, batch_size=5):
     """
     Generator that gets its data from a SQL database.
 
     Yields batches of data and label with data = [log10(iq), ...] and
-    label = ['model', ...].
+    label = [encoder(model), ...].
 
     Data is chosen at random with replacement and runs forever.
 
     :param db: The SQL database connection.
     :param datatable: The data table name to connect to.
-    :param encoder: LabelEncoder for transforming labels to categorical ints.
+    :param encoder: *encoder(model)* converts model name to target encoding.
     """
-    from keras.utils.np_utils import to_categorical
-
     # Build query string, checking values before substituting
     batch_size = int(batch_size) # force integer
     assert tag.isidentifier()
@@ -98,9 +96,7 @@ def iread_sql(db, tag, metatable, encoder=None, batch_size=5):
             # Convert binary blob back into numpy array
             iq = [asdata(v) for v in iq]
             iq = [np.log10(v) for v in iq]
-            encoded = encoder.transform(models)
-            categorical = np.asarray(to_categorical(encoded, 64))
-            yield iq, categorical
+            yield iq, encoder(models)
 
 def model_counts(db, tag='train'):
     """
@@ -135,6 +131,20 @@ def read_sql(db, tag='train'):
     # Convert binary blob back into numpy array
     iq = [asdata(v) for v in iq]
     return iq, model
+
+def read_sql_all(db, tag='train'):
+    assert tag.isidentifier()
+    all_rows = f"SELECT model, q, dq, iq, diq FROM {tag}"
+    # Note: Not writing so don't need "with db".
+    with closing(db.cursor()) as cursor:
+        if not _table_exists(cursor, tag):
+            raise ValueError(f"table {tag} doesn't exist: one of {_get_tables(cursor)}.")
+        cursor.execute(all_rows)
+        data = cursor.fetchall()
+    model, *columns = zip(*data)
+    # Convert binary blob back into numpy array
+    columns = [[asdata(v) for v in col] for col in columns]
+    return [model] + columns
 
 def write_sql(db, model, items, tag='train'):
     assert tag.isidentifier()

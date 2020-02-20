@@ -10,169 +10,181 @@ import logging
 import os
 import random
 import sys
+import warnings
 
 import numpy as np
 from pandas import factorize
-import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import linkage, dendrogram
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import LabelEncoder
-import bottleneck
-import keras
-from keras.utils import to_categorical
+from tensorflow import keras
 
-from .sas_io import read_seq_1d
+try:
+    # Use bottleneck for nan functions if it is available.
+    from bottleneck import nanargmax, argpartition
+except ImportError:
+    from numpy import nanargmax, argpartition
+    #warnings.warn("Using numpy since bottleneck isn't available")
+
+from . import sas_io
+from .sasnet import OnehotEncoder, fix_dims
+
+def columnize(items):
+    try:
+        from columnize import columnize as _columnize, default_opts
+        return _columnize(list(items), default_opts['displaywidth'])
+    except ImportError:
+        return "\n".join(items)
 
 parser = argparse.ArgumentParser(
     description="Test a previously trained neural network, or use it to "
                 "classify new data.")
-parser.add_argument("model_file",
-                    help="Path to h5 model file from sasnet.py. The directory "
-                         "should also contain a 'name' file containing a list "
-                         "of models the network was trained on.")
-parser.add_argument("data_path", help="Path to load data from.")
-parser.add_argument("-v", "--verbose", help="Verbose output.",
-                    action="store_true")
-parser.add_argument("-c", "--classify", help="Classification mode.",
-                    action="store_true")
-parser.add_argument("-p", "--pattern",
-                    help="Pattern to match to files to open.")
+parser.add_argument(
+    "model_file",
+    help="""
+        Path to h5 model file from sasnet.py. The directory
+        should also contain a 'name' file containing a list
+        of models the network was trained on.""")
+parser.add_argument(
+    "-v", "--verbose", action="store_true",
+    help="Verbose output.")
+parser.add_argument("-c", "--classify", action="store_true",
+    help="Classification mode.")
+parser.add_argument(
+    "--database", type=str, default=sas_io.DB_FILE,
+    help="Path to the sqlite database file.")
 
 
-def load_from(path):
+def reload_net(path):
     """
-    Loads a model from the specified path.
+    Loads a classifier saved by sasnets from *path*.
 
     :param path: Relative or absolute path to the .h5 model file
-    :return: The loaded model.
+    :return: The loaded classifier.
     """
     return keras.models.load_model(os.path.normpath(path))
 
 
-def predict_and_val(model, x, y, names):
+def predict_and_val(classifier, x, y, categories):
     """
-    Runs the model on the input datasets and compares the results with the
+    Runs the classifier on the input datasets and compares the results with the
     correct labels provided from y.
 
-    :param model: The model to evaluate.
+    :param classifier: The trained classifier.
     :param x: List of x values to predict on.
     :param y: List of y values to predict on.
-    :param names: A list of all possible model names.
-    :return: Two lists, il and nl, which are the indices of the model and its proper name respectively.
+    :param categories: A list of all possible sas model names.
+    :return: Two lists, the indices of the sas model and its proper name respectively.
     """
-    encoder = LabelEncoder()
-    encoder.fit(y)
-    encoded = encoder.transform(y)
-    yt = to_categorical(encoded)
+    encoder = OnehotEncoder(categories)
+    prediction = classifier.predict(fix_dims(x))
+    error_frequency = {name: 0 for name in categories}
+    errors = []
+    for k, (prob, actual) in enumerate(zip(prediction, y)):
+        mle = prob.argmax(axis=-1)
+        predicted = categories[mle]
+        if predicted != actual:
+            actual_index = encoder.index([actual])[0]
+            ratio = prob[actual_index] / prob[mle]
+            if len(errors) == 20:
+                print("...")
+            if len(errors) < 20:
+                print(f"Predicted: {predicted}, Actual: {actual}, Index: {k}, Prediction ratio: {ratio:.2}.")
+            error_frequency[actual] += 1
+            errors.append((k, predicted, actual, ratio))
+    print(columnize(f"{k}:{v:<3}" for k, v in sorted(error_frequency.items())))
+    rows, predicted, _, _ = zip(*errors)
+    return rows, predicted
 
-    prob = model.predict(x)
-    err = [0] * (len(set(names)))
-    ind = 0
-    il = list()
-    nl = list()
-    for p, e, in zip(prob, yt):
-        p1 = p.argmax(axis=-1)
-        e1 = e.argmax(axis=-1)
-        if names[p1] != y[e1]:
-            print("Predicted: " + str(names[p1]) + ", Actual: " + str(
-                y[e1]) + ", Index: " + str(ind) + ".")
-            err[e1] += 1
-            nl.append(p1)
-            il.append(ind)
-        ind += 1
-    print(err)
-    return il, nl
-
-
-def predict(model, x, names, num=5):
+def show_predictions(classifier, x, y, categories, rank=5):
     """
-    Runs a Keras model to predict based on input.
+    Runs a Keras classifier to predict based on input.
 
-    :param model: The model to use.
+    :param classifier: The trained classifier.
     :param x: The x inputs to predict from.
-    :param names: A list of all model names.
-    :param num: The top num probabilities and models will be printed.
+    :param y: The expected value, or None if no expectation.
+    :param categories: A list of all model names.
+    :param rank: The top num probabilities and models will be printed.
     :return: None
     """
-    prob = model.predict(x)
-    for p in prob:
-        pt = bottleneck.argpartition(p, num)[-num:]
+    encoder = OnehotEncoder(categories)
+    prediction = classifier.predict(fix_dims(x))
+    target = (lambda k: f"{k}") if y is None else (lambda k: f"{k}({y[k]})")
+    for k, p in enumerate(prediction):
+        pt = argpartition(p, rank)[-rank:]
         plist = pt[np.argsort(p[pt])]
-        sys.stdout.write("The " + str(num) + " five most likely models and " +
-                         "respective probabilities were: ")
-        for i in reversed(plist):
-            sys.stdout.write(str(names[i]) + ", " + str(p[i]) + " ")
-        sys.stdout.write("\n")
+        labels = encoder.inverse_transform(plist)
+        values = p[plist]
+        print(f"{target(k)} => ", end="")
+        for k, v in reversed(zip(labels, values)):
+            print(f"{k}:{v:.3} ", end="")
+        print("")
 
 
-def cpredict(model, x, l=71, pl=5000):
+def confusion_matrix(classifier, x, y, categories):
     """
-    Runs a Keras model to create a confusion matrix.
+    Runs a Keras classifier to create a confusion matrix.
 
-    :param model: Model to use.
+    :param classifier: The trained classifier.
     :param x: A list of x values to predict on.
-    :param l: The number of input models.
-    :param pl: The number of data iterations per model.
-    :return: A confusion matrix of percentages
+    :return: A confusion matrix, with proportions in [0, 1]
     """
-    res = np.zeros([l, l])
-    row = 0
-    c = 0
-    prob = model.predict(x, verbose=1)
-    for p in prob:
-        pt = bottleneck.nanargmax(p)
-        res[row][pt] += 1
-        c += 1
-        if c % 5000 == 0:
-            row += 1
-    return np.divide(res, float(pl))
+    encoder = OnehotEncoder(categories)
+    index = encoder.index(y)
+    prediction = classifier.predict(fix_dims(x), verbose=1)
+    n = len(categories)
+    res = np.zeros((n, n))
+    weight = np.zeros(n)
+    for k, (p, row) in enumerate(zip(prediction, index)):
+        mle = nanargmax(p)
+        res[row][mle] += 1
+        weight[row] += 1
+    return res/weight[:, None] # TODO: divide row or column?
 
-
-def rpredict(model, x, names):
+def rpredict(classifier, x, categories):
     """
     Same as predict, but outputs names only.
 
-    :param model: The model to use.
+    :param classifier: The trained classifier.
     :param x: List of x to predict on.
-    :param names: List of all model names.
+    :param categories: List of all model names.
     :return: List of predicted names.
     """
-    res = list()
-    prob = model.predict(x, verbose=1)
-    for p in prob:
-        pt = bottleneck.nanargmax(p)
-        res.append(names[pt])
-    return res
+    encoder = OnehotEncoder(categories)
+    prediction = classifier.predict(fix_dims(x), verbose=1)
+    index = [nanargmax(p) for p in prediction]
+    label = encoder.label_encoder.inverse_transform(index)
+    return label.tolist()
 
 
-def fit(mn, q, iq):
+def fit(model, q, dq, iq, diq):
     """
     Fit resulting data using bumps server. Currently unimplemented.
 
-    :param mn: Model name.
+    :param model: sasmodels name.
     :param q: List of q values.
     :param iq: List of I(q) values.
     :return: Bumps fit.
     """
     logging.info("Starting fit")
-    return (mn, q, iq)
+    return (model, q, iq)
 
-
-def tcluster(model, x, names):
+def plot_tSNE(classifier, x, categories):
     """
-    Displays a t-SNE cluster coloured by the model predicted labels.
+    Displays a t-SNE cluster coloured by the classifier predicted labels.
 
-    :param model: Model to use.
+    :param classifier: The trained classifier.
     :param x: List of x values to predict on.
-    :param names: List of all model names.
+    :param categories: List of all model names.
     :return: The tSNE object that was plotted.
     """
+    import matplotlib.pyplot as plt
     try:
         import seaborn as sns
     except ImportError:
         sns = None
     xt = random.sample(x, 5000)
-    arr = rpredict(model, xt, names)
+    arr = rpredict(classifier, xt,categories)
     t = TSNE(n_components=2, verbose=2)
     classx = t.fit_transform(xt)
     if sns is not None:
@@ -185,23 +197,46 @@ def tcluster(model, x, names):
     return classx
 
 
-def dcluster(model, x, names):
+def plot_dendrogram(classifier, x, y, categories):
     """
     Displays a dendrogram clustering based on the confusion matrix.
 
-    :param model: The model to predict on.
+    :param classifier: The trained classifier.
     :param x: A list of x values to predict on.
-    :param names: List of all model names.
+    :param y: The target values for the predictions.
+    :param categories: List of all model names.
     :return: The dendrogram object.
     """
-    arr = cpredict(model, x, names)
+    import matplotlib.pyplot as plt
+    arr = confusion_matrix(classifier, x, y, categories)
+    plt.subplot(211)
+    plt.pcolor(arr, cmap='RdBu')
+    plt.gca().get_xaxis().set_visible(False)
+    plt.gca().get_yaxis().set_visible(False)
+    plt.subplot(212)
     z = linkage(arr, 'average')
-    h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=names,
+    h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=categories,
                    color_threshold=.5, get_leaves=True)
+    plt.gca().get_yaxis().set_visible(False)
     plt.tight_layout()
     plt.show()
-    return h
 
+def plot_failures(failures, q, iq):
+    import matplotlib.pyplot as plt
+    index, predicted = failures
+    if len(index) > 100:
+        warnings.warn(f"too many failures to plot {len(index)}")
+        return None
+    for i, name in zip(index, predicted):
+        plt.style.use("classic")
+        plt.plot(q[i], iq[i])
+        ax = plt.gca()
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.autoscale(enable=True)
+        with open(f"./savenet/failed-{name}-{i}.svg", "w") as fd:
+            plt.savefig(fd, format="svg", bbox_inches="tight")
+            plt.clf()
 
 def main(args):
     """
@@ -210,60 +245,17 @@ def main(args):
     :param args: Arguments from command line.
     :return: None.
     """
-    parsed = parser.parse_args(args)
-    with open(os.path.join(os.path.dirname(parsed.data_path), "name"),
-              'r') as fd:
-        n = ast.literal_eval(fd.readline().strip())
-        q, iq, y, dq, diq, nlines = read_seq_1d(parsed.data_path,
-        pattern=parsed.pattern,
-        verbosity=parsed.verbose)
-    # conn = psql.connect("dbname=sas_data user=sasnets host=127.0.0.1")
-    # # conn.set_session(readonly=True)
-    # with conn:
-    #     with conn.cursor() as c:
-    #         c.execute("SELECT model FROM train_data;")
-    #         xt = set(c.fetchall())
-    #         y = [i[0] for i in xt]
-    #         encoder = LabelEncoder()
-    #         encoder.fit(y)
-    #
-    #         c.execute("CREATE EXTENSION IF NOT EXISTS tsm_system_rows")
-    #         c.execute(
-    #             sql.SQL("SELECT * FROM {}").format(
-    #                 sql.Identifier("train_metadata")))
-    #         x = np.asarray(c.fetchall())
-    #         q = x[0][1]
-    #         dq = x[0][2]
-    #         diq = x[0][3]
-    #         c.execute(sql.SQL(
-    #             "SELECT * FROM {}").format(
-    #             sql.Identifier("eval_data")))
-    #         x = np.asarray(c.fetchall())
-    #         iq_list = x[:, 1]
-    #         y_list = x[:, 2]
-    #         encoded = encoder.transform(y_list)
-    #         yt = np.asarray(to_categorical(encoded, 71))
-    #         q_list = np.asarray([np.transpose([q, iq, dq, diq]) for iq in
-    #                              iq_list])
-    model = load_from(parsed.model_file)
-    if parsed.classify:
-        # tcluster(model, b, n, c)
-        z = dcluster(model, iq, n)
-        plt.pcolor(z, cmap='RdBu')
-        plt.show()
+    opts = parser.parse_args(args)
+    db = sas_io.sql_connect(opts.database)
+    labels, q, dq, iq, diq = sas_io.read_sql_all(db)
+    categories = sorted(set(labels))
+    classifier = reload_net(opts.model_file)
+    if opts.classify:
+        # plot_tSNE(classifier, iq, categories)
+        plot_dendrogram(classifier, iq, labels, categories)
     else:
-        ilist, nlist = predict_and_val(model, q, y, n)
-        for i, n1 in zip(ilist, nlist):
-            plt.style.use("classic")
-            plt.plot(q[i], iq[i])
-            ax = plt.gca()
-            ax.set_xscale("log")
-            ax.set_yscale("log")
-            ax.autoscale(enable=True)
-            with open("/home/chwang/out/Img/" + n[n1] + str(i), 'w') as fd:
-                plt.savefig(fd, format="svg", bbox_inches="tight")
-                plt.clf()
-
+        failures = predict_and_val(classifier, iq, labels, categories)
+        plot_failures(failures, q, iq)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
