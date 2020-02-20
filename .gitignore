@@ -1,5 +1,8 @@
 # sasnet generated files
 *.db
+/tensorboard
+/savenet
+/hardcopy.0
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
