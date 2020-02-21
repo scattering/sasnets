@@ -16,6 +16,7 @@ Basic flow:
     # ... probably missing some packages here...
     conda create -n sasnets python numpy scipy matplotlib scikit-learn pandas
     conda activate sasnets
+    pip install columnize  # for pretty output columns
 
     # Add tensorflow or tensorflow-gpu, depending on whether you have nvidia
     # hardware (and drivers for cuda 10.0 for tensorflow 2.x).
