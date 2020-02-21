@@ -61,14 +61,20 @@ def predict_and_val(classifier, x, y, categories):
     :return: Two lists, the indices of the sas model and its proper name respectively.
     """
     encoder = OnehotEncoder(categories)
+    yindex = encoder.index(y)
     prediction = classifier.predict(fix_dims(x))
     error_frequency = {name: 0 for name in categories}
+    top5_frequency = {name: 0 for name in categories}
+    freq = {name: 0 for name in categories}
     errors = []
-    for k, (prob, actual) in enumerate(zip(prediction, y)):
+    for k, (prob, actual, actual_index) in enumerate(zip(prediction, y, yindex)):
+        sort_index = prob.argsort(axis=-1)
+        freq[actual] += 1
+        if actual_index in sort_index[-5:]:
+            top5_frequency[actual] += 1
         mle = prob.argmax(axis=-1)
         predicted = encoder.label([mle])[0]
         if predicted != actual:
-            actual_index = encoder.index([actual])[0]
             try:
                 ratio = prob[actual_index] / prob[mle]
             except IndexError:
@@ -77,10 +83,13 @@ def predict_and_val(classifier, x, y, categories):
             if len(errors) == 20:
                 print("...")
             if len(errors) < 20:
-                print(f"Predicted: {predicted}, Actual: {actual}, Index: {k}, Prediction ratio: {ratio:.2}.")
+                print(f"Predicted: {predicted}, Actual: {actual}, Index: {k}, Target/mle: {ratio:.2}.")
             error_frequency[actual] += 1
             errors.append((k, predicted, actual, ratio))
-    print(columnize(f"{k}:{v:<3}" for k, v in sorted(error_frequency.items())))
+    print("Error rate")
+    print(columnize(f"{k}: {100*v/freq[k]:.1f}%" for k, v in sorted(error_frequency.items())))
+    print("Top 5 rate")
+    print(columnize(f"{k}: {100*v/freq[k]:.1f}%" for k, v in sorted(top5_frequency.items())))
     rows, predicted, _, _ = zip(*errors)
     return rows, predicted
 
