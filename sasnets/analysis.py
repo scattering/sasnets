@@ -34,7 +34,7 @@ parser = argparse.ArgumentParser(
     description="Test a previously trained neural network, or use it to "
                 "classify new data.")
 parser.add_argument(
-    "model_file", default="savenet/out.h5",
+    "model_file", default="savenet/out.h5", nargs="?",
     help="""
         Path to h5 model file from sasnet.py. The directory
         should also contain a 'name' file containing a list
@@ -87,9 +87,9 @@ def predict_and_val(classifier, x, y, categories):
             error_frequency[actual] += 1
             errors.append((k, predicted, actual, ratio))
     print("Error rate")
-    print(columnize(f"{k}: {100*v/freq[k]:.1f}%" for k, v in sorted(error_frequency.items())))
+    print(columnize(f"{k}: {int(100*v/freq[k]+0.5)}%" for k, v in sorted(error_frequency.items())))
     print("Top 5 rate")
-    print(columnize(f"{k}: {100*v/freq[k]:.1f}%" for k, v in sorted(top5_frequency.items())))
+    print(columnize(f"{k}: {int(100*v/freq[k]+0.5)}%" for k, v in sorted(top5_frequency.items())))
     rows, predicted, _, _ = zip(*errors)
     return rows, predicted
 
