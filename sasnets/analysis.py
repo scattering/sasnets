@@ -233,16 +233,24 @@ def plot_tSNE(classifier, x, categories):
         import seaborn as sns
     except ImportError:
         sns = None
-    xt = random.sample(x, 5000)
+    
+    density=2000#len(x)/10
+    print(categories)
+    xt = random.sample(x, density)
     arr = rpredict(classifier, xt,categories)
-    t = TSNE(n_components=2, verbose=2)
+    print('arr')
+    print(arr[2])
+    t = TSNE(n_components=2, verbose=2, n_iter=3000, perplexity=55)
     classx = t.fit_transform(xt)
     if sns is not None:
-        p = np.array(sns.color_palette("hls", 69))
-        plt.scatter(classx[:, 0], classx[:, 1],
+        print('sns')
+        p = np.array(sns.color_palette("hls", len(categories)))
+        plt.scatter(classx[:, 0], classx[:, 1],alpha=0.3,
                     c=p[np.asarray(factorize(arr)[0]).astype(np.int)])
     else:
+        print('scatter')
         plt.scatter(classx[:, 0], classx[:, 1])
+    plt.savefig('tsne.png')
     plt.show()
     return classx
 
@@ -259,20 +267,36 @@ def plot_dendrogram(classifier, x, y, categories):
     """
     import matplotlib.pyplot as plt
     arr = confusion_matrix(classifier, x, y, categories)
+    plt.subplot(211)
+    plt.pcolor(arr, cmap='RdBu')
+    plt.gca().get_xaxis().set_visible(False)
+    plt.gca().get_yaxis().set_visible(False)
     plt.subplot(212)
     z = linkage(arr, 'average')
     h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=categories,
                    color_threshold=.5, get_leaves=True)
     plt.gca().get_yaxis().set_visible(False)
-    plt.subplot(211)
-    # Reorder array rows and columns to match dendrogram order
-    reorder = arr[h['leaves'], :][:, h['leaves']]
-    plt.pcolor(reorder, cmap='RdBu')
-    #plt.pcolor(np.log10(reorder), cmap='RdBu')
-    plt.gca().get_xaxis().set_visible(False)
-    plt.gca().get_yaxis().set_visible(False)
     plt.tight_layout()
+    plt.savefig('dendogram.png')
     plt.show()
+
+def plot_failures(failures, q, iq):
+    import matplotlib.pyplot as plt
+    index, predicted = failures
+    if len(index) > 150:
+        warnings.warn(f"too many failures to plot {len(index)}")
+        return None
+    for i, name in zip(index, predicted):
+        plt.style.use("classic")
+        plt.plot(q[i], iq[i])
+        ax = plt.gca()
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.autoscale(enable=True)
+        with open(f"./savenet/failed-{name}-{i}.svg", "w") as fd:
+            plt.savefig(fd, format="svg", bbox_inches="tight")
+            plt.clf()
+
 
 def plot_failures(failures, q, iq):
     import matplotlib.pyplot as plt
@@ -305,7 +329,7 @@ def main(args):
     categories = sorted(set(labels))
     classifier = reload_net(opts.model_file)
     if opts.classify:
-        # plot_tSNE(classifier, logiq, categories)
+        plot_tSNE(classifier, log_iq, categories)
         plot_dendrogram(classifier, log_iq, labels, categories)
     else:
         failures = predict_and_val(classifier, log_iq, labels, categories)
