@@ -232,8 +232,7 @@ def oned_convnet(opts, x, y, test=None, seed=235):
     #es = EarlyStopping(min_delta=0.005, patience=5, verbose=verbose)
     basename = inepath(opts.save_path)
     checkpoint = ModelCheckpoint(
-        ## To keep multiple, use {epoch:03d} as part of filename.
-        filepath=basename+"-check.h5", verbose=verbose,
+        filepath=basename+"-check.h5", # or "-check{epoch:03d}.h5",
         ## To keep best loss, and not overwrite every epoch.
         #monitor='loss', save_best_only=True, mode='auto',
         )
