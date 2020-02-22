@@ -20,12 +20,15 @@ Basic flow:
 
     # Add tensorflow or tensorflow-gpu, depending on whether you have nvidia
     # hardware (and drivers for cuda 10.0 for tensorflow 2.x).
-    conda install -y tensorflow-gpu
+    #conda install -y tensorflow-gpu
     conda install -y tensorflow
 
-    # Need sasmodels and pyopencl for data generation
-    conda install -y pybind11 appdirs decorator
+    # Need sasmodels for data generation. This requires pycuda, pyopencl
+    # or a C compiler to run.
+    conda install -y pybind11 appdirs decorator mako
     pip install pyopencl
+    #pip install pycuda
+    #pip install tinycc  # small C compiler for windows, if you need it.
 
     # Work from the sasnets directory
     cd sasnets

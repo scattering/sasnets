@@ -19,7 +19,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from tensorflow import keras
-from tensorflow.keras.callbacks import TensorBoard, EarlyStopping
+from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, ModelCheckpoint
 from tensorflow.keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
     MaxPooling1D, InputLayer
 from tensorflow.keras.models import Sequential
@@ -230,10 +230,13 @@ def oned_convnet(opts, x, y, test=None, seed=235):
 
     tb = TensorBoard(log_dir=opts.tensorboard, histogram_freq=1)
     #es = EarlyStopping(min_delta=0.005, patience=5, verbose=verbose)
-    #basename = inepath(opts.save_path)
-    #checkpoint = ModelCheckpoint(
-    #    basename+".h5", monitor='loss', verbose=verbose,
-    #    save_best_only=True, mode='min')
+    basename = inepath(opts.save_path)
+    checkpoint = ModelCheckpoint(
+        ## To keep multiple, use {epoch:03d} as part of filename.
+        filepath=basename+"-check.h5", verbose=verbose,
+        ## To keep best loss, and not overwrite every epoch.
+        #monitor='loss', save_best_only=True, mode='auto',
+        )
 
     if opts.resume:
         model = reload_net(inepath(opts.save_path)+'.h5')
@@ -265,7 +268,7 @@ def oned_convnet(opts, x, y, test=None, seed=235):
         steps_per_epoch=opts.steps, epochs=opts.epochs,
         verbose=verbose, validation_data=(xval, yval),
         #callbacks=[tb, es, checkpoint],
-        callbacks=[tb],
+        callbacks=[tb, checkpoint],
         )
 
     # Check the results against the validation data.
