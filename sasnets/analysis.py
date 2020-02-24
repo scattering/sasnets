@@ -254,6 +254,111 @@ def plot_tSNE(classifier, x, categories):
     plt.show()
     return classx
 
+def plot_filters(model, x, categories,iq):
+    """
+    Displays filters
+
+    :param classifier: The trained classifier.
+    :param x: List of x values to predict on.
+    :param categories: List of all model names.
+    :return: The tSNE object that was plotted.
+    """
+    import matplotlib.pyplot as plt
+    from tensorflow import keras
+    from tensorflow.keras.models import Model
+
+    #from keras.preprocessing.image import img_to_array
+    try:
+        import seaborn as sns
+    except ImportError:
+        sns = None
+    
+    from sasnets.sasnet import fix_dims
+    
+    # summarize filter shapes
+    flist=[]
+    llist=[]
+    for layer in model.layers:
+        # check for convolutional layer
+        if 'conv' not in layer.name:
+            continue
+        # get filter weights
+        filters, biases = layer.get_weights()
+        flist.append(filters)
+        llist.append(layer)
+        print(layer.name, filters.shape)
+
+    print('oi')
+    #filters, biases = model.layers[1].get_weights()
+    filters=flist[0]
+    # normalize filter values to 0-1 so we can visualize them
+    f_min, f_max = filters.min(), filters.max()
+
+    filters = (filters - f_min) / (f_max - f_min)
+    # plot first few filters
+    n_filters, ix = 6, 1 #note that there are 128 filters for us in the first layer
+    for i in range(n_filters):
+        # get the filter
+        f = filters[:, :, i]
+        #print('f',f.shape)
+        # plot each channel separately # we only have one channel
+        for j in range(1):
+            # specify subplot and turn of axis
+            ax = plt.subplot(n_filters, 1, ix)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            # plot filter channel in grayscale
+            #print('fj',f[:, j])
+            plt.imshow(np.expand_dims(f[:, j],1), cmap='gray')
+            ix += 1
+    # show the figure
+    if 1:
+        plt.show()
+
+    # redefine model to output right after the first hidden layer
+    model = Model(inputs=model.inputs, outputs=llist[0].output)
+    model.summary()
+    # load the image with the required shape
+    #img = load_img('bird.jpg', target_size=(224, 224))
+    
+    # convert the image to an array
+    #img = img_to_array(img)
+    # expand dimensions so that it represents a single 'sample'
+    img=x[0]
+    print('img',img.shape)
+    img=fix_dims(img)
+    print('img',img.shape)
+    #
+    img = np.expand_dims(img, axis=0) #first make our 1d array to 2D
+    print('img expand',img.shape)
+    
+    # prepare the image (e.g. scale pixel values for the vgg)
+    #img = preprocess_input(img)
+    # get feature map for first hidden layer
+    feature_maps = model.predict(img)
+    print('features', feature_maps.shape)
+    # plot all 64 maps in an 8x8 squares
+    square = 8
+    ix = 1
+    fig=plt.figure()
+    plt.plot(x[0])
+    plt.savefig('sample_data.png')
+
+    for _ in range(square):
+        for _ in range(2*square):
+            # specify subplot and turn of axis
+            ax = plt.subplot(square, 2*square, ix)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            # plot filter channel in grayscale
+            plt.plot(feature_maps[0, :, ix-1])
+            #plt.imshow(np.expand_dims(feature_maps[0, :, ix-1],axis=0), cmap='gray')
+            ix += 1
+    # show the figure
+    #plt.show()
+    plt.savefig('sample_filters_layer1.png')
+
+    return 
 
 def plot_dendrogram(classifier, x, y, categories):
     """
@@ -280,22 +385,6 @@ def plot_dendrogram(classifier, x, y, categories):
     plt.savefig('dendogram.png')
     plt.show()
 
-def plot_failures(failures, q, iq):
-    import matplotlib.pyplot as plt
-    index, predicted = failures
-    if len(index) > 150:
-        warnings.warn(f"too many failures to plot {len(index)}")
-        return None
-    for i, name in zip(index, predicted):
-        plt.style.use("classic")
-        plt.plot(q[i], iq[i])
-        ax = plt.gca()
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.autoscale(enable=True)
-        with open(f"./savenet/failed-{name}-{i}.svg", "w") as fd:
-            plt.savefig(fd, format="svg", bbox_inches="tight")
-            plt.clf()
 
 
 def plot_failures(failures, q, iq):
