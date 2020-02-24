@@ -261,8 +261,10 @@ def plot_filters(model, x, categories,iq):
     :param classifier: The trained classifier.
     :param x: List of x values to predict on.
     :param categories: List of all model names.
-    :return: The tSNE object that was plotted.
+    :return: 
     """
+    
+    #adapted from https://machinelearningmastery.com/how-to-visualize-filters-and-feature-maps-in-convolutional-neural-networks/
     import matplotlib.pyplot as plt
     from tensorflow import keras
     from tensorflow.keras.models import Model
