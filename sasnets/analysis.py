@@ -233,7 +233,7 @@ def plot_tSNE(classifier, x, categories):
         import seaborn as sns
     except ImportError:
         sns = None
-    
+
     density=2000#len(x)/10
     print(categories)
     xt = random.sample(x, density)
@@ -261,9 +261,9 @@ def plot_filters(model, x, categories,iq):
     :param classifier: The trained classifier.
     :param x: List of x values to predict on.
     :param categories: List of all model names.
-    :return: 
+    :return:
     """
-    
+
     #adapted from https://machinelearningmastery.com/how-to-visualize-filters-and-feature-maps-in-convolutional-neural-networks/
     import matplotlib.pyplot as plt
     from tensorflow import keras
@@ -274,9 +274,9 @@ def plot_filters(model, x, categories,iq):
         import seaborn as sns
     except ImportError:
         sns = None
-    
+
     from sasnets.sasnet import fix_dims
-    
+
     # summarize filter shapes
     flist=[]
     llist=[]
@@ -322,7 +322,7 @@ def plot_filters(model, x, categories,iq):
     model.summary()
     # load the image with the required shape
     #img = load_img('bird.jpg', target_size=(224, 224))
-    
+
     # convert the image to an array
     #img = img_to_array(img)
     # expand dimensions so that it represents a single 'sample'
@@ -333,7 +333,7 @@ def plot_filters(model, x, categories,iq):
     #
     img = np.expand_dims(img, axis=0) #first make our 1d array to 2D
     print('img expand',img.shape)
-    
+
     # prepare the image (e.g. scale pixel values for the vgg)
     #img = preprocess_input(img)
     # get feature map for first hidden layer
@@ -360,33 +360,41 @@ def plot_filters(model, x, categories,iq):
     #plt.show()
     plt.savefig('sample_filters_layer1.png')
 
-    return 
+    return
 
-def plot_dendrogram(classifier, x, y, categories):
+def plot_dendrogram(corr, categories, confusion_norm=False):
     """
     Displays a dendrogram clustering based on the confusion matrix.
 
-    :param classifier: The trained classifier.
-    :param x: A list of x values to predict on.
-    :param y: The target values for the predictions.
+    :param corr: The confusion matrix.
     :param categories: List of all model names.
+    :param confusion_norm: Normalize confusion matrix by acceptance percentage.
     :return: The dendrogram object.
     """
     import matplotlib.pyplot as plt
-    arr = confusion_matrix(classifier, x, y, categories)
-    plt.subplot(211)
-    plt.pcolor(arr, cmap='RdBu')
-    plt.gca().get_xaxis().set_visible(False)
-    plt.gca().get_yaxis().set_visible(False)
+    if confusion_norm:
+        # Remove diagonal from the confusion matrix so we can see confusion
+        # patterns for elements that are not correctly recognized.
+        d = np.diag(corr)
+        d = d + (d == 0)
+        corr = corr/d
+    corr[corr == 0.] = corr[corr > 0].min()/10
+    #corr = np.log10(corr)
     plt.subplot(212)
-    z = linkage(arr, 'average')
+    z = linkage(corr, 'ward', optimal_ordering=True)
     h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=categories,
                    color_threshold=.5, get_leaves=True)
+    plt.gca().get_yaxis().set_visible(False)
+    plt.subplot(211)
+    # Reorder array rows and columns to match dendrogram order
+    reorder = corr[h['leaves'], :][:, h['leaves']]
+    plt.pcolor(reorder, cmap='RdBu')
+    #plt.pcolor(np.log10(reorder))
+    plt.gca().get_xaxis().set_visible(False)
     plt.gca().get_yaxis().set_visible(False)
     plt.tight_layout()
     plt.savefig('dendogram.png')
     plt.show()
-
 
 
 def plot_failures(failures, q, iq):
@@ -420,8 +428,9 @@ def main(args):
     categories = sorted(set(labels))
     classifier = reload_net(opts.model_file)
     if opts.classify:
+        corr = confusion_matrix(classifier, log_iq, labels, categories)
+        plot_dendrogram(corr, categories)
         plot_tSNE(classifier, log_iq, categories)
-        plot_dendrogram(classifier, log_iq, labels, categories)
     else:
         failures = predict_and_val(classifier, log_iq, labels, categories)
         plot_failures(failures, q, iq)
