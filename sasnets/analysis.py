@@ -257,7 +257,7 @@ def plot_tSNE(classifier, x, categories, order=None):
     #return xt, xt_reduced
     x1, x2 = xt_reduced.T
 
-    fig = plt.figure()
+    fig = plt.figure(figsize=(8, 10))
     # Label each point with the predicted model
     prediction = rpredict(classifier, xt, categories, output='index')
     # If the labels are ordered, give nearby labels similar colors
@@ -279,6 +279,8 @@ def plot_tSNE(classifier, x, categories, order=None):
     lookup = lambda x, y: picker.query([[x,y]])[1][0]
     label = lambda index: categories[prediction[index]]
     plt.gca().format_coord = lambda x,y: f"= {label(lookup(x,y))} ="
+    plt.gca().get_xaxis().set_visible(False)
+    plt.gca().get_yaxis().set_visible(False)
     # save figure and display
     plt.savefig('tsne.png')
     plt.pause(0.1)
@@ -316,7 +318,7 @@ def plot_filters(model, x, categories,iq):
     f_min, f_max = filters.min(), filters.max()
 
     import matplotlib.pyplot as plt
-    fig = plt.figure()
+    fig = plt.figure(figsize=(8, 10))
     filters = (filters - f_min) / (f_max - f_min)
     # plot first few filters
     n_filters, ix = 6, 1 #note that there are 128 filters for us in the first layer
@@ -361,7 +363,7 @@ def plot_filters(model, x, categories,iq):
     # plot all 64 maps in an 8x8 squares
     square = 8
     ix = 1
-    fig = plt.figure()
+    fig = plt.figure(figsize=(8, 10))
     plt.plot(x[0])
     plt.savefig('sample_data.png')
 
@@ -398,7 +400,7 @@ def plot_dendrogram(corr, categories, confusion_norm=False):
         corr = corr/d
     corr[corr == 0.] = corr[corr > 0].min()/10
     #corr = np.log10(corr)
-    fig = plt.figure()
+    fig = plt.figure(figsize=(8, 10))
     plt.subplot(212)
     z = linkage(corr, 'ward', optimal_ordering=True)
     h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=categories,
