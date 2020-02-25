@@ -20,22 +20,26 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 import tensorflow as tf
-TF2 = tensorflow.__version__ >= "2.0"
+TF2 = tf.__version__ >= "2.0"
 
 if TF2:
     from tensorflow import keras
-    from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, ModelCheckpoint
+    from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, Callback
     from tensorflow.keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
         MaxPooling1D, InputLayer
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.utils import to_categorical
+    ACCURACY, VAL_ACCURACY = "accuracy", "val_accuracy"
+    LOSS, VAL_LOSS = "loss", "val_loss"
 else:
     import keras
-    from keras.callbacks import TensorBoard, EarlyStopping, ModelCheckpoint
+    from keras.callbacks import TensorBoard, EarlyStopping, Callback
     from keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
         MaxPooling1D, InputLayer
     from keras.models import Sequential
     from keras.utils import to_categorical
+    ACCURACY, VAL_ACCURACY = "acc", "val_acc"
+    LOSS, VAL_LOSS = "loss", "val_loss"
 
 # SASNets packages
 from . import sas_io
@@ -84,6 +88,23 @@ parser.set_defaults(feature=True)
 parser.add_argument(
     "-s", "--save-path", default="./savenet/out",
     help="Path to save model weights and info to")
+
+class IntervalCheckpoint(Callback):
+    def __init__(self, filepath=None, interval=300, verbose=False):
+        super().__init__()
+        self.start = self.t0 = time.perf_counter()
+        self.interval = interval
+        self.filepath = filepath
+        self.verbose = verbose
+    def on_epoch_end(self, epoch, logs={}):
+        t1 = time.perf_counter()
+        if t1 - self.t0 > self.interval:
+            if self.verbose:
+                print(f'epoch:{epoch:4d} time:{(t1 - self.start)/60:.1f} min'
+                      f' loss: {logs[LOSS]:.4f} val_loss: {logs[VAL_LOSS]:.4f}'
+                      f'  acc: {logs[ACCURACY]:.4f} val_acc: {logs[VAL_ACCURACY]:.4f}')
+            self.t0 = t1
+            self.model.save(self.filepath.format(epoch=epoch))
 
 class OnehotEncoder:
     def __init__(self, categories):
@@ -183,7 +204,7 @@ def sql_net(opts):
     model.add(Dense(nq//4, activation='softmax'))
     model.compile(loss="categorical_crossentropy",
                   optimizer=keras.optimizers.Adadelta(),
-                  metrics=['accuracy'])
+                  metrics=[ACCURACY])
 
     # Model Run
     if verbose > 0:
@@ -243,13 +264,13 @@ def oned_convnet(opts, x, y, test=None, seed=235):
     #if categories != sorted(set(yval)):
     #    raise ValueError("Test data is missing categories.")
 
-    tb = TensorBoard(log_dir=opts.tensorboard, histogram_freq=1)
+    #tb = TensorBoard(log_dir=opts.tensorboard, histogram_freq=1)
     #es = EarlyStopping(min_delta=0.005, patience=5, verbose=verbose)
     basename = inepath(opts.save_path)
-    checkpoint = ModelCheckpoint(
+    checkpoint = IntervalCheckpoint(
+        interval=300, # every 5 min
         filepath=basename+"-check.h5", # or "-check{epoch:03d}.h5",
-        ## To keep best loss, and not overwrite every epoch.
-        #monitor='loss', save_best_only=True, mode='auto',
+        verbose=not verbose, # only print log if fit() is not
         )
 
     if opts.resume:
@@ -272,7 +293,7 @@ def oned_convnet(opts, x, y, test=None, seed=235):
         loss = ('binary_crossentropy' if nlabels == 2
                 else 'categorical_crossentropy')
         model.compile(loss=loss, optimizer=keras.optimizers.Adadelta(),
-                    metrics=['accuracy'])
+                    metrics=[ACCURACY])
     if verbose > 0:
         print(model.summary())
 
@@ -282,7 +303,8 @@ def oned_convnet(opts, x, y, test=None, seed=235):
         steps_per_epoch=opts.steps, epochs=opts.epochs,
         verbose=verbose, validation_data=(xval, yval),
         #callbacks=[tb, es, checkpoint],
-        callbacks=[tb, checkpoint],
+        #callbacks=[tb, checkpoint],
+        callbacks=[checkpoint],
         )
 
     # Check the results against the validation data.
@@ -294,6 +316,7 @@ def oned_convnet(opts, x, y, test=None, seed=235):
         print('\nTest loss: ', score[0])
         print('Test accuracy:', score[1])
 
+    #print("history", history.history)
     save_output(
         save_path=opts.save_path,
         model=model,
@@ -331,7 +354,7 @@ def trad_nn(x, y, xtest=None, ytest=None, seed=235):
     model.add(Dropout(0.5))
     model.add(Dense(len(set(y)), activation='softmax'))
     model.compile(loss='categorical_crossentropy', optimizer="adam",
-                  metrics=['accuracy'])
+                  metrics=[ACCURACY])
     print(model.summary())
     history = model.fit(xtrain, ytrain, batch_size=10, epochs=10,
                         verbose=verbose, validation_data=(xval, yval))
@@ -345,8 +368,8 @@ def trad_nn(x, y, xtest=None, ytest=None, seed=235):
 
 def plot_history(history, basename=None):
     import matplotlib.pyplot as plt
-    plt.plot(history.history['accuracy'])
-    plt.plot(history.history['val_accuracy'])
+    plt.plot(history.history[ACCURACY])
+    plt.plot(history.history[VAL_ACCURACY])
     plt.title('model accuracy')
     plt.ylabel('accuracy')
     plt.xlabel('epoch')
