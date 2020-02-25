@@ -18,12 +18,24 @@ import json
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from tensorflow import keras
-from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, ModelCheckpoint
-from tensorflow.keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
-    MaxPooling1D, InputLayer
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.utils import to_categorical
+
+import tensorflow as tf
+TF2 = tensorflow.__version__ >= "2.0"
+
+if TF2:
+    from tensorflow import keras
+    from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, ModelCheckpoint
+    from tensorflow.keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
+        MaxPooling1D, InputLayer
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.utils import to_categorical
+else:
+    import keras
+    from keras.callbacks import TensorBoard, EarlyStopping, ModelCheckpoint
+    from keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
+        MaxPooling1D, InputLayer
+    from keras.models import Sequential
+    from keras.utils import to_categorical
 
 # SASNets packages
 from . import sas_io
@@ -56,6 +68,9 @@ parser.add_argument(
 parser.add_argument(
     "--tensorboard", type=str, default="tensorboard",
     help="Tensorboard directory.")
+parser.add_argument(
+    "--gpus", type=int, default=1,
+    help="Number of GPUs to use.")
 parser.add_argument(
     "-v", "--verbose", action="store_true",
     help="Control output verbosity")
