@@ -67,7 +67,7 @@ parser.add_argument(
     "--epochs", type=int, default=50,
     help="Number of epochs.")
 parser.add_argument(
-    "--batch", type=int, default=5,
+    "--batch", type=int, default=5000,
     help="Batch size.")
 parser.add_argument(
     "--tensorboard", type=str, default="tensorboard",
