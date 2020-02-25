@@ -232,27 +232,26 @@ def plot_tSNE(classifier, x, categories):
     try:
         import seaborn as sns
     except ImportError:
-        sns = None
+        warnings.info("seaborn missing. Try: pip install seaborn")
 
+    # TODO: move to calculation function
     density=2000#len(x)/10
-    print(categories)
     xt = random.sample(x, density)
-    arr = rpredict(classifier, xt,categories)
-    print('arr')
-    print(arr[2])
     t = TSNE(n_components=2, verbose=2, n_iter=3000, perplexity=55)
-    classx = t.fit_transform(xt)
+    xt_reduced = t.fit_transform(xt)
+    #return xt, xt_reduced
+
+    fig = plt.figure()
     if sns is not None:
-        print('sns')
+        # Label each point with the predicted class
+        prediction = rpredict(classifier, xt, categories)
+        cat_xt = np.asarray(factorize(prediction)[0]).astype(np.int)
         p = np.array(sns.color_palette("hls", len(categories)))
-        plt.scatter(classx[:, 0], classx[:, 1],alpha=0.3,
-                    c=p[np.asarray(factorize(arr)[0]).astype(np.int)])
+        plt.scatter(xt_reduced[:, 0], xt_reduced[:, 1],alpha=0.3, c=p[cat_xt])
     else:
-        print('scatter')
-        plt.scatter(classx[:, 0], classx[:, 1])
+        plt.scatter(xt_reduced[:, 0], xt_reduced[:, 1])
     plt.savefig('tsne.png')
-    plt.show()
-    return classx
+    plt.pause(0.1)
 
 def plot_filters(model, x, categories,iq):
     """
@@ -296,6 +295,7 @@ def plot_filters(model, x, categories,iq):
     # normalize filter values to 0-1 so we can visualize them
     f_min, f_max = filters.min(), filters.max()
 
+    fig = plt.figure()
     filters = (filters - f_min) / (f_max - f_min)
     # plot first few filters
     n_filters, ix = 6, 1 #note that there are 128 filters for us in the first layer
@@ -313,9 +313,7 @@ def plot_filters(model, x, categories,iq):
             #print('fj',f[:, j])
             plt.imshow(np.expand_dims(f[:, j],1), cmap='gray')
             ix += 1
-    # show the figure
-    if 1:
-        plt.show()
+    plt.pause(0.1)
 
     # redefine model to output right after the first hidden layer
     model = Model(inputs=model.inputs, outputs=llist[0].output)
@@ -342,7 +340,7 @@ def plot_filters(model, x, categories,iq):
     # plot all 64 maps in an 8x8 squares
     square = 8
     ix = 1
-    fig=plt.figure()
+    fig = plt.figure()
     plt.plot(x[0])
     plt.savefig('sample_data.png')
 
@@ -359,8 +357,7 @@ def plot_filters(model, x, categories,iq):
     # show the figure
     #plt.show()
     plt.savefig('sample_filters_layer1.png')
-
-    return
+    plt.pause(0.1)
 
 def plot_dendrogram(corr, categories, confusion_norm=False):
     """
@@ -380,6 +377,7 @@ def plot_dendrogram(corr, categories, confusion_norm=False):
         corr = corr/d
     corr[corr == 0.] = corr[corr > 0].min()/10
     #corr = np.log10(corr)
+    fig = plt.figure()
     plt.subplot(212)
     z = linkage(corr, 'ward', optimal_ordering=True)
     h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=categories,
@@ -394,8 +392,7 @@ def plot_dendrogram(corr, categories, confusion_norm=False):
     plt.gca().get_yaxis().set_visible(False)
     plt.tight_layout()
     plt.savefig('dendogram.png')
-    plt.show()
-
+    plt.pause(0.1)
 
 def plot_failures(failures, q, iq):
     import matplotlib.pyplot as plt
@@ -429,8 +426,10 @@ def main(args):
     classifier = reload_net(opts.model_file)
     if opts.classify:
         corr = confusion_matrix(classifier, log_iq, labels, categories)
+        import matplotlib.pyplot as plt
         plot_dendrogram(corr, categories)
         plot_tSNE(classifier, log_iq, categories)
+        plt.show()
     else:
         failures = predict_and_val(classifier, log_iq, labels, categories)
         plot_failures(failures, q, iq)

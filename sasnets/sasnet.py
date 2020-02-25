@@ -100,9 +100,9 @@ class IntervalCheckpoint(Callback):
         t1 = time.perf_counter()
         if t1 - self.t0 > self.interval:
             if self.verbose:
-                print(f'epoch:{epoch:4d} time:{(t1 - self.start)/60:.1f} min'
+                print(f'epoch:{epoch:4d} time:{int((t1 - self.start + 30)/60):4d} min'
                       f' loss: {logs[LOSS]:.4f} val_loss: {logs[VAL_LOSS]:.4f}'
-                      f'  acc: {logs[ACCURACY]:.4f} val_acc: {logs[VAL_ACCURACY]:.4f}')
+                      f' acc: {logs[ACCURACY]:.4f} val_acc: {logs[VAL_ACCURACY]:.4f}')
             self.t0 = t1
             self.model.save(self.filepath.format(epoch=epoch))
 
@@ -268,7 +268,7 @@ def oned_convnet(opts, x, y, test=None, seed=235):
     #es = EarlyStopping(min_delta=0.005, patience=5, verbose=verbose)
     basename = inepath(opts.save_path)
     checkpoint = IntervalCheckpoint(
-        interval=300, # every 5 min
+        interval=60, # every minute
         filepath=basename+"-check.h5", # or "-check{epoch:03d}.h5",
         verbose=not verbose, # only print log if fit() is not
         )

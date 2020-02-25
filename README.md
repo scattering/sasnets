@@ -14,7 +14,7 @@ Basic flow:
 
     # Create the conda environment.
     # ... probably missing some packages here...
-    conda create -n sasnets python numpy scipy matplotlib scikit-learn pandas
+    conda create -n sasnets python numpy scipy matplotlib scikit-learn pandas seaborn
     conda activate sasnets
     pip install columnize # ... for pretty output columns [optional]
 
