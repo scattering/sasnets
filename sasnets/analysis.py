@@ -15,9 +15,7 @@ import warnings
 import numpy as np
 from pandas import factorize
 from scipy.cluster.hierarchy import linkage, dendrogram
-from sklearn.manifold import TSNE
 from sklearn.preprocessing import LabelEncoder
-from tensorflow import keras
 
 try:
     # Use bottleneck for nan functions if it is available.
@@ -47,6 +45,8 @@ parser.add_argument("-c", "--classify", action="store_true",
 parser.add_argument(
     "--database", type=str, default=sas_io.DB_FILE,
     help="Path to the sqlite database file.")
+
+BATCH_SIZE = 1024
 
 
 def predict_and_val(classifier, x, y, categories):
@@ -79,7 +79,7 @@ def predict_and_val(classifier, x, y, categories):
     """
     encoder = OnehotEncoder(categories)
     yindex = encoder.index(y)
-    prediction = classifier.predict(fix_dims(x))
+    prediction = classifier.predict(fix_dims(x), batch_size=BATCH_SIZE)
     error_freq = {name: 0 for name in categories}
     top5_freq = {name: 0 for name in categories}
     rank_avg = {name: 0 for name in categories}
@@ -158,7 +158,7 @@ def show_predictions(classifier, x, y, categories, rank=5):
     :return: None
     """
     encoder = OnehotEncoder(categories)
-    prediction = classifier.predict(fix_dims(x))
+    prediction = classifier.predict(fix_dims(x), batch_size=BATCH_SIZE)
     target = (lambda k: f"{k}") if y is None else (lambda k: f"{k}({y[k]})")
     for k, prob in enumerate(prediction):
         pt = argpartition(p, rank)[-rank:]
@@ -181,7 +181,7 @@ def confusion_matrix(classifier, x, y, categories):
     """
     encoder = OnehotEncoder(categories)
     index = encoder.index(y)
-    prediction = classifier.predict(fix_dims(x), verbose=1)
+    prediction = classifier.predict(fix_dims(x), verbose=1, batch_size=BATCH_SIZE)
     n = len(categories)
     res = np.zeros((n, n))
     weight = np.zeros(n)
@@ -191,21 +191,27 @@ def confusion_matrix(classifier, x, y, categories):
         weight[row] += 1
     return res/weight[:, None] # TODO: divide row or column?
 
-def rpredict(classifier, x, categories):
+def rpredict(classifier, x, categories, verbose=0, output='label'):
     """
     Same as predict, but outputs names only.
 
     :param classifier: The trained classifier.
     :param x: List of x to predict on.
     :param categories: List of all model names.
+    :param verbose: 0 or 1
     :return: List of predicted names.
     """
+    batch_size = min(len(x), BATCH_SIZE)
     encoder = OnehotEncoder(categories)
-    prediction = classifier.predict(fix_dims(x), verbose=1)
+    prediction = classifier.predict(
+        fix_dims(x), batch_size=batch_size, verbose=verbose)
     index = [nanargmax(prob) for prob in prediction]
-    label = encoder.label(index)
-    return label.tolist()
-
+    if output == "label":
+        label = encoder.label(index)
+        return label.tolist()
+    if output == "index":
+        return index
+    raise ValueError("output should be 'label' or 'index'")
 
 def fit(model, q, dq, iq, diq):
     """
@@ -219,37 +225,61 @@ def fit(model, q, dq, iq, diq):
     logging.info("Starting fit")
     return (model, q, iq)
 
-def plot_tSNE(classifier, x, categories):
+def plot_tSNE(classifier, x, categories, order=None):
     """
     Displays a t-SNE cluster coloured by the classifier predicted labels.
 
     :param classifier: The trained classifier.
     :param x: List of x values to predict on.
     :param categories: List of all model names.
+    :param order: order of categories in dendrogram.
     :return: The tSNE object that was plotted.
     """
+    from scipy.spatial import cKDTree
     import matplotlib.pyplot as plt
-    try:
-        import seaborn as sns
-    except ImportError:
-        warnings.info("seaborn missing. Try: pip install seaborn")
 
     # TODO: move to calculation function
+    try:
+        from umap import UMAP # umap is much faster but requies numpy
+    except ImportError:
+        warnings.info("umap-learn missing. Using scikit TSNE instead")
+        UMAP = None
+        from sklearn.manifold import TSNE
+        #from tsnecuda import TSNE # tsnecuda claims to be much faster
     density=2000#len(x)/10
     xt = random.sample(x, density)
-    t = TSNE(n_components=2, verbose=2, n_iter=3000, perplexity=55)
+    if UMAP is not None:
+        t = UMAP()
+    else:
+        t = TSNE(n_components=2, verbose=2, n_iter=3000, perplexity=55)
+    print("mapping manifold")
     xt_reduced = t.fit_transform(xt)
     #return xt, xt_reduced
+    x1, x2 = xt_reduced.T
 
     fig = plt.figure()
-    if sns is not None:
-        # Label each point with the predicted class
-        prediction = rpredict(classifier, xt, categories)
-        cat_xt = np.asarray(factorize(prediction)[0]).astype(np.int)
-        p = np.array(sns.color_palette("hls", len(categories)))
-        plt.scatter(xt_reduced[:, 0], xt_reduced[:, 1],alpha=0.3, c=p[cat_xt])
+    # Label each point with the predicted model
+    prediction = rpredict(classifier, xt, categories, output='index')
+    # If the labels are ordered, give nearby labels similar colors
+    if order is not None:
+        rev = np.empty_like(order)
+        rev[order] = np.arange(len(order))
+        c = rev[prediction]
     else:
-        plt.scatter(xt_reduced[:, 0], xt_reduced[:, 1])
+        c = prediction
+    cm = plt.cm.get_cmap('viridis')
+    h = plt.scatter(x1, x2, c=c, vmin=0, vmax=len(categories)-1, cmap=cm)
+    # Associate colors with labels
+    cbar = plt.colorbar(h, orientation='horizontal')
+    cbar.set_ticks(np.arange(len(categories)))
+    cbar.ax.set_xticklabels([categories[k] for k in order], rotation=90)
+    plt.tight_layout()
+    # Set the label for the mouse coordinates to the category of the nearest point
+    picker = cKDTree(xt_reduced)
+    lookup = lambda x, y: picker.query([[x,y]])[1][0]
+    label = lambda index: categories[prediction[index]]
+    plt.gca().format_coord = lambda x,y: f"= {label(lookup(x,y))} ="
+    # save figure and display
     plt.savefig('tsne.png')
     plt.pause(0.1)
 
@@ -264,17 +294,7 @@ def plot_filters(model, x, categories,iq):
     """
 
     #adapted from https://machinelearningmastery.com/how-to-visualize-filters-and-feature-maps-in-convolutional-neural-networks/
-    import matplotlib.pyplot as plt
-    from tensorflow import keras
     from tensorflow.keras.models import Model
-
-    #from keras.preprocessing.image import img_to_array
-    try:
-        import seaborn as sns
-    except ImportError:
-        sns = None
-
-    from sasnets.sasnet import fix_dims
 
     # summarize filter shapes
     flist=[]
@@ -295,6 +315,7 @@ def plot_filters(model, x, categories,iq):
     # normalize filter values to 0-1 so we can visualize them
     f_min, f_max = filters.min(), filters.max()
 
+    import matplotlib.pyplot as plt
     fig = plt.figure()
     filters = (filters - f_min) / (f_max - f_min)
     # plot first few filters
@@ -324,9 +345,9 @@ def plot_filters(model, x, categories,iq):
     # convert the image to an array
     #img = img_to_array(img)
     # expand dimensions so that it represents a single 'sample'
-    img=x[0]
+    img = x[0]
     print('img',img.shape)
-    img=fix_dims(img)
+    img = fix_dims(img)
     print('img',img.shape)
     #
     img = np.expand_dims(img, axis=0) #first make our 1d array to 2D
@@ -335,7 +356,7 @@ def plot_filters(model, x, categories,iq):
     # prepare the image (e.g. scale pixel values for the vgg)
     #img = preprocess_input(img)
     # get feature map for first hidden layer
-    feature_maps = model.predict(img)
+    feature_maps = model.predict(img, batch_size=BATCH_SIZE)
     print('features', feature_maps.shape)
     # plot all 64 maps in an 8x8 squares
     square = 8
@@ -382,10 +403,11 @@ def plot_dendrogram(corr, categories, confusion_norm=False):
     z = linkage(corr, 'ward', optimal_ordering=True)
     h = dendrogram(z, leaf_rotation=90., leaf_font_size=8, labels=categories,
                    color_threshold=.5, get_leaves=True)
+    order = np.asarray(h['leaves'], 'i')
     plt.gca().get_yaxis().set_visible(False)
     plt.subplot(211)
     # Reorder array rows and columns to match dendrogram order
-    reorder = corr[h['leaves'], :][:, h['leaves']]
+    reorder = corr[order, :][:, order]
     plt.pcolor(reorder, cmap='RdBu')
     #plt.pcolor(np.log10(reorder))
     plt.gca().get_xaxis().set_visible(False)
@@ -393,6 +415,7 @@ def plot_dendrogram(corr, categories, confusion_norm=False):
     plt.tight_layout()
     plt.savefig('dendogram.png')
     plt.pause(0.1)
+    return order
 
 def plot_failures(failures, q, iq):
     import matplotlib.pyplot as plt
@@ -427,8 +450,8 @@ def main(args):
     if opts.classify:
         corr = confusion_matrix(classifier, log_iq, labels, categories)
         import matplotlib.pyplot as plt
-        plot_dendrogram(corr, categories)
-        plot_tSNE(classifier, log_iq, categories)
+        order = plot_dendrogram(corr, categories)
+        plot_tSNE(classifier, log_iq, categories, order=order)
         plt.show()
     else:
         failures = predict_and_val(classifier, log_iq, labels, categories)
