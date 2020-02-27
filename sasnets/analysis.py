@@ -415,7 +415,7 @@ def plot_dendrogram(corr, categories, confusion_norm=False):
     plt.gca().get_xaxis().set_visible(False)
     plt.gca().get_yaxis().set_visible(False)
     plt.tight_layout()
-    plt.savefig('dendogram.png')
+    plt.savefig('dendrogram.png')
     plt.pause(0.1)
     return order
 
