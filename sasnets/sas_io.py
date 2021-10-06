@@ -239,7 +239,7 @@ def _tbm_part(db, part, limit):
 
 def read_sql(db, table='train', input_encoder=input_encoder, limit=None):
     assert table.isidentifier()
-    limit_str = "" if limit is None else f" LIMIT {limit}"
+    limit_str = "" if not limit else f" LIMIT {limit}"  # limit could be None or 0
     all_rows = f"SELECT model, iq FROM {table}{limit_str}"
     # Note: Not writing so don't need "with db".
     with closing(db.cursor()) as cursor:
