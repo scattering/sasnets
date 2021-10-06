@@ -30,13 +30,25 @@ import numpy as np
 
 DB_DTYPE = np.dtype('<f4')
 DB_FILE = "sasnets.db"
-def sql_connect(dbfile=DB_FILE):
+def sql_connect(dbfile=DB_FILE, mode='ro'):
+    """
+    Open the sqlite database.
+
+    Use *mode='ro'* for read-only access (the default). This is required
+    if the database is on an NFS mounted filesystem since locking is not
+    supported by SQLite.
+    """
     import sqlite3
     # since we are using "with connection:" for our transactions, we
     # get commit-rollback for free.  Otherwise we might be tempted to
     # use auto-commit as follows:
     #      conn = sqlite3.connect(dbfile, isolation_level=None)
-    conn = sqlite3.connect(dbfile)
+    #conn = sqlite3.connect(dbfile)
+    if dbfile.startswith('file:'):
+        uri = f"{dbfile}?mode={mode}"
+    else:
+        uri = f"file:{os.path.realpath(os.path.expanduser(dbfile))}?mode={mode}"
+    conn = sqlite3.connect(uri, uri=True)
     return conn
 
 def sql_tables(db):
@@ -59,17 +71,20 @@ def asblob(data):
 
 def input_encoder(iq):
     """
-    Feature engineering on inputs: scale peak to 1 and take the log.
+    Feature engineering on inputs: scale by geometric mean and take the log.
     """
-    return np.log10(iq) - np.log10(iq.max())
+    return np.log10(iq) - np.log10(iq).mean()
 
 
 # TODO: maybe return interleaved points log10(iq), diq/iq
 # Then we can maybe learn to ignore noise in the data?
 # TODO: generalize to take a set of columns a column to data transform
 # Either that or give a choice amongst standard transforms, such as log/linear
-def iread_sql(db, tag, metatable, batch_size=5,
-              encoder=lambda y: y, input_encoder=input_encoder):
+def iread_sql(db, table, batch_size=5,
+              encoder=lambda y: y,
+              input_encoder=input_encoder,
+              random=True,
+              ):
     """
     Generator that gets its data from a SQL database.
 
@@ -79,64 +94,157 @@ def iread_sql(db, tag, metatable, batch_size=5,
     Data is chosen at random with replacement and runs forever.
 
     Note: batches may be different sizes if some datasets contain NaN.
-    It would be better to strip these at the source...
+    It would be better to strip these before adding to the database.
+
+    Random batches require a table with no deleted rows. If there are a few
+    deleted rows then some batches may be smaller. If there are many deleted
+    rows then some batches may be empty.
+
+    Requires a table with no deleted rows. If there are a few deleted rows
+    then some batches may be smaller. If there are many deleted rows then
+    some batches may be empty.
 
     :param db: The SQL database connection.
     :param datatable: The data table name to connect to.
     :param encoder: *encoder(label)* converts model name to target encoding.
     :param input_encoder: *input_encoder(iq)* scale and transform iq
+    :param random: return random batches rather than ordered batches
     """
     # Build query string, checking values before substituting
-    batch_size = int(batch_size) # force integer
-    assert tag.isidentifier()
-    # using implicit rowid column in (most) SQLite tables.
-    random_row_query = f"""
-        SELECT (model, iq) FROM {tag} WHERE rowid IN
-            (SELECT rowid FROM tag ORDER BY RANDOM() LIMIT {batch_size})
-        """
-    ## PostgreSQL supports tablesample
-    #random_row_query = f"""
-    #    SELECT (iq, model) FROM {datatable}
-    #        TABLESAMPLE SYSTEM_ROWS({batch_size})"""
+    assert table.isidentifier()
+    sql_batch = _random_sqlite if random else _ordered_sqlite
+    columns = "model, iq"
+    for batch in sql_batch(db, table, columns, batch_size):
+        labels, iq = zip(*batch)
+        # Convert binary blob back numpy array
+        iq = [asdata(v) for v in iq]
+        # Normalize to peak = 1 and take the log
+        if input_encoder is not None:
+            iq = [input_encoder(v) for v in iq]
+        yield iq, encoder(labels)
 
+def _random_sqlite(db, table, columns, batch_size):
     with db, closing(db.cursor()) as cursor:
+        # Find number of rows in the table. Assumes no deleted rows.
+        cursor.execute(f"SELECT max(rowid) FROM {table} LIMIT 1")
+        num_rows = cursor.fetchall()[0][0]
+        # Fetch k random rows.
+        random_row_query = f"""
+            SELECT {columns} FROM {table}
+            WHERE rowid IN (
+                SELECT abs(random())%{num_rows}+1 FROM {table} LIMIT {batch_size}
+            )
+            """
+        #print(random_row_query)
         while True:
             cursor.execute(random_row_query)
-            data = cursor.fetchall()
-            label, iq = zip(*data)
-            # Convert binary blob back into numpy array
-            iq = [asdata(v) for v in iq]
-            if input_encoder is not None:
-                iq = [input_encoder(v) for v in iq]
-            yield iq, encoder(label)
+            batch = cursor.fetchall()
+            yield batch
+    ## PostgreSQL supports tablesample
+    #random_row_query = f"""
+    #    SELECT {columns} FROM {table}
+    #        TABLESAMPLE SYSTEM_ROWS({batch_size})"""
 
-def model_counts(db, tag='train'):
+def _ordered_sqlite(db, table, columns, batch_size):
+    ordered_query = f"SELECT {columns} from {table}"
+    batch = []  # Start with an empty batch
+    with db, closing(db.cursor()) as cursor:
+        while True:
+            # Query from the start of the database
+            cursor.execute(ordered_query)
+            # If rollover then fill the last batch from the start and yield
+            if batch:
+                batch = batch + cursor.fetchmany(batch_size - len(batch))
+                yield batch
+            # yield full batches until the final unfilled batch. This breaks
+            # the inner loop and goes back to the outer loop starting the
+            # cycle again.
+            while True:
+                batch = cursor.fetchmany(batch_size)
+                if len(batch) < batch_size:
+                    break
+                yield batch
+
+def model_counts(db, table='train'):
     """
-    Returns {'name': count, ...} for each model appearing in table *tag*.
+    Returns {'name': count, ...} for each model appearing in *table*.
     """
     # Note: Not writing so don't need "with db".
     with closing(db.cursor()) as cursor:
-        if not _table_exists(cursor, tag):
+        if not _table_exists(cursor, table):
             return {}
-        cursor.execute(f"select model, count(model) from {tag} group by model")
+        cursor.execute(f"select model, count(model) from {table} group by model")
         counts = cursor.fetchall()
     return dict(counts)
 
-def _table_exists(cursor, tag):
+def maxrow(db, table):
+    """
+    Return the max rowid in the table.
+
+    If there are no deleted rows then the max row is then number of rows
+    since rowid is 1-origin.
+    """
+    with db, closing(db.cursor()) as cursor:
+        cursor.execute(f"SELECT max(rowid) FROM {table} LIMIT 1")
+        return cursor.fetchall()[0][0]
+
+def _table_exists(cursor, table):
     # Check that table exists before writing
     cursor.execute(f"""
         SELECT name FROM sqlite_master
-        WHERE type='table' AND name='{tag}'""")
+        WHERE type='table' AND name='{table}'""")
     result = cursor.fetchall()
     return len(result) > 0
 
-def read_sql(db, tag='train', input_encoder=input_encoder):
-    assert tag.isidentifier()
-    all_rows = f"SELECT model, iq FROM {tag}"
+def read_data(database, table):
+    #q, iq, label, n = sas_io.read_1d_seq(opts.path, table=table, verbose=verbose)
+    db = sql_connect(database)
+    iq, label = read_sql(db, table)
+    iq = np.asarray(iq)
+    db.close()
+    return iq, label
+
+def read_data_tbm(database, limited=False):
+    """
+    Read data from Tyler Martin's tables. This dataset splits data into
+    into three tables for different detector distances low_q, med_q and high_q.
+
+    The returned data uses a simple join converted to log scale and normalized
+    by the geometric mean. No noise is added. Data may be with or without
+    background, depending on the *--database* option set on the command line.
+    """
+    #q, iq, label, n = sas_io.read_1d_seq(opts.path, table=opts.train, verbose=verbose)
+    db = sql_connect(database)
+    # For debugging, only load the first three models
+    n_train, n_test = 30000, 5000
+    k = 3 if limited else 0
+    train = _tbm_part(db, 'train', limit=k*n_train)
+    test = _tbm_part(db, 'test', limit=k*n_test)
+    db.close()
+    return train, test
+
+def _tbm_part(db, part, limit):
+    # Data is split across three tables with shared rowid key.
+    # TODO: Could do this by chunks so that it takes less memory.
+    iq_low, label = read_sql(db, f'low_q_{part}', input_encoder=None, limit=limit)
+    iq_med, label = read_sql(db, f'med_q_{part}', input_encoder=None, limit=limit)
+    iq_high, label = read_sql(db, f'high_q_{part}', input_encoder=None, limit=limit)
+    iq = np.empty(
+        (len(iq_low), len(iq_low[0])+len(iq_med[0])+len(iq_high[0])),
+        dtype=iq_low[0].dtype,
+    )
+    for k, (iq_low_k, iq_med_k, iq_high_k) in enumerate(zip(iq_low, iq_med, iq_high)):
+        iq[k] = input_encoder(np.hstack((iq_low_k, iq_med_k, iq_high_k)))
+    return iq, label
+
+def read_sql(db, table='train', input_encoder=input_encoder, limit=None):
+    assert table.isidentifier()
+    limit_str = "" if not limit else f" LIMIT {limit}"  # limit could be None or 0
+    all_rows = f"SELECT model, iq FROM {table}{limit_str}"
     # Note: Not writing so don't need "with db".
     with closing(db.cursor()) as cursor:
-        if not _table_exists(cursor, tag):
-            raise ValueError(f"table {tag} doesn't exist: one of {_get_tables(cursor)}.")
+        if not _table_exists(cursor, table):
+            raise ValueError(f"table {table} doesn't exist: one of {_get_tables(cursor)}.")
         cursor.execute(all_rows)
         data = cursor.fetchall()
     label, iq = zip(*data)
@@ -146,13 +254,13 @@ def read_sql(db, tag='train', input_encoder=input_encoder):
         iq = [input_encoder(v) for v in iq]
     return iq, label
 
-def read_sql_all(db, tag='train'):
-    assert tag.isidentifier()
-    all_rows = f"SELECT model, q, dq, iq, diq FROM {tag}"
+def read_sql_all(db, table='train'):
+    assert table.isidentifier()
+    all_rows = f"SELECT model, q, dq, iq, diq FROM {table}"
     # Note: Not writing so don't need "with db".
     with closing(db.cursor()) as cursor:
-        if not _table_exists(cursor, tag):
-            raise ValueError(f"table {tag} doesn't exist: one of {_get_tables(cursor)}.")
+        if not _table_exists(cursor, table):
+            raise ValueError(f"table {table} doesn't exist: one of {_get_tables(cursor)}.")
         cursor.execute(all_rows)
         data = cursor.fetchall()
     label, *columns = zip(*data)
@@ -160,14 +268,14 @@ def read_sql_all(db, tag='train'):
     columns = [[asdata(v) for v in col] for col in columns]
     return [label] + columns
 
-def write_sql(db, label, items, tag='train'):
-    assert tag.isidentifier()
+def write_sql(db, label, items, table='train'):
+    assert table.isidentifier()
     with db, closing(db.cursor()) as cursor:
         # Check that table exists before writing
-        if not _table_exists(cursor, tag):
+        if not _table_exists(cursor, table):
             # TODO: Make label+seed the primary key so no duplicates?
             cursor.execute(f"""
-                CREATE TABLE {tag} (
+                CREATE TABLE {table} (
                     model TEXT, seed INTEGER, params TEXT,
                     q BLOB, dq BLOB, iq BLOB, diq BLOB)
                 """)
@@ -179,7 +287,7 @@ def write_sql(db, label, items, tag='train'):
             #paramstr = json.dumps({k: float(v) for k, v in params.items()})
             #disp = lambda x: (print(x),x)[1]
             cursor.execute(f"""
-                INSERT INTO {tag} (model, seed, params, q, dq, iq, diq)
+                INSERT INTO {table} (model, seed, params, q, dq, iq, diq)
                 VALUES ('{label}', {seed}, ?, ?, ?, ?, ?)""",
                 (paramstr, q, dq, iq, diq))
 

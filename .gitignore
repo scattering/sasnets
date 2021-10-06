@@ -1,4 +1,6 @@
 # sasnet generated files
+*.png
+*.out
 *.db
 /tensorboard
 /savenet

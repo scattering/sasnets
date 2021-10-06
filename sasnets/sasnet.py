@@ -18,12 +18,28 @@ import json
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from tensorflow import keras
-from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, ModelCheckpoint
-from tensorflow.keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
-    MaxPooling1D, InputLayer
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.utils import to_categorical
+
+import tensorflow as tf
+TF2 = tf.__version__ >= "2.0"
+
+if TF2:
+    from tensorflow import keras
+    from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, Callback
+    from tensorflow.keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
+        MaxPooling1D, InputLayer
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.utils import to_categorical
+    ACCURACY, VAL_ACCURACY = "accuracy", "val_accuracy"
+    LOSS, VAL_LOSS = "loss", "val_loss"
+else:
+    import keras
+    from keras.callbacks import TensorBoard, EarlyStopping, Callback
+    from keras.layers import Conv1D, Dropout, Flatten, Dense, Embedding, \
+        MaxPooling1D, InputLayer
+    from keras.models import Sequential
+    from keras.utils import to_categorical
+    ACCURACY, VAL_ACCURACY = "acc", "val_acc"
+    LOSS, VAL_LOSS = "loss", "val_loss"
 
 # SASNets packages
 from . import sas_io
@@ -51,14 +67,20 @@ parser.add_argument(
     "--epochs", type=int, default=50,
     help="Number of epochs.")
 parser.add_argument(
-    "--batch", type=int, default=5,
+    "--batch", type=int, default=5000,
     help="Batch size.")
 parser.add_argument(
     "--tensorboard", type=str, default="tensorboard",
     help="Tensorboard directory.")
 parser.add_argument(
+    "--gpus", type=int, default=1,
+    help="Number of GPUs to use.")
+parser.add_argument(
     "-v", "--verbose", action="store_true",
     help="Control output verbosity")
+parser.add_argument(
+    "--limited", action="store_true",
+    help="For debugging, only use the first few models")
 parser.add_argument(
     "-r", "--resume", action='store_true', dest='resume',
     help="resume fit stored in --save-path")
@@ -69,6 +91,23 @@ parser.set_defaults(feature=True)
 parser.add_argument(
     "-s", "--save-path", default="./savenet/out",
     help="Path to save model weights and info to")
+
+class IntervalCheckpoint(Callback):
+    def __init__(self, filepath=None, interval=300, verbose=False):
+        super().__init__()
+        self.start = self.t0 = time.perf_counter()
+        self.interval = interval
+        self.filepath = filepath
+        self.verbose = verbose
+    def on_epoch_end(self, epoch, logs={}):
+        t1 = time.perf_counter()
+        if t1 - self.t0 > self.interval:
+            if self.verbose:
+                print(f'epoch:{epoch:4d} time:{int((t1 - self.start + 30)/60):4d} min'
+                      f' loss: {logs[LOSS]:.4f} val_loss: {logs[VAL_LOSS]:.4f}'
+                      f' acc: {logs[ACCURACY]:.4f} val_acc: {logs[VAL_ACCURACY]:.4f}')
+            self.t0 = t1
+            self.model.save(self.filepath.format(epoch=epoch))
 
 class OnehotEncoder:
     def __init__(self, categories):
@@ -133,67 +172,6 @@ def save_output(save_path, model, encoder, history, seed, score):
             json.dump(out, fd, cls=sas_io.NpEncoder)
         plot_history(history, basename=basename)
 
-def sql_net(opts):
-    """
-    A 1D convnet that uses a generator reading from a SQL database
-    instead of loading all files into memory at once.
-    """
-    verbose = 1 if opts.verbose else 0
-    db = sas_io.sql_connect(opts.database)
-    counts = model_counts(db, tag=opts.train)
-    encoder = OnehotEncoder(counts.keys())
-    train_seq = sas_io.iread_sql(
-        db, opts.train, encoder=encoder, batch_size=opts.batch)
-    validation_seq = sas_io.iread_sql(
-        db, opts.validation, encoder=encoder, batch_size=opts.batch)
-
-    # Grab some training data so we can see how big it is
-    x, y = next(train_seq)
-
-    tb = TensorBoard(log_dir=opts.tensorboard, histogram_freq=1)
-    es = EarlyStopping(min_delta=0.001, patience=15, verbose=verbose)
-
-    # Begin model definitions
-    nq = len(x[0])
-    model = Sequential()
-    model.add(Conv1D(nq, kernel_size=8, activation='relu', input_shape=[nq, 1]))
-    model.add(MaxPooling1D(pool_size=4))
-    model.add(Dropout(.17676))
-    model.add(Conv1D(nq//2, kernel_size=6, activation='relu'))
-    model.add(MaxPooling1D(pool_size=3))
-    model.add(Dropout(.20782))
-    model.add(Flatten())
-    model.add(Dense(nq//4, activation='tanh'))
-    model.add(Dropout(.20582))
-    model.add(Dense(nq//4, activation='softmax'))
-    model.compile(loss="categorical_crossentropy",
-                  optimizer=keras.optimizers.Adadelta(),
-                  metrics=['accuracy'])
-
-    # Model Run
-    if verbose > 0:
-        print(model.summary())
-    history = model.fit_generator(
-        train_seq, steps_per_epoch=opts.steps, epochs=opts.epochs,
-        workers=1, verbose=verbose, validation_data=validation_seq,
-        max_queue_size=1, callbacks=[tb, es])
-
-    score = None
-    if xval is not None and yval is not None:
-        score = model.evaluate(xval, yval, verbose=verbose)
-        print('\nTest loss: ', score[0])
-        print('Test accuracy:', score[1])
-
-    save_output(
-        save_path=opts.save_path,
-        model=model,
-        encoder=encoder,
-        history=history,
-        seed=None,
-        score=score)
-    logging.info("Complete.")
-
-
 def oned_convnet(opts, x, y, test=None, seed=235):
     """
     Runs a 1D convolutional classification neural net on the input data x and y.
@@ -213,72 +191,98 @@ def oned_convnet(opts, x, y, test=None, seed=235):
     categories = sorted(set(y))
     encoder = OnehotEncoder(categories)
 
-    # Split data into train and validation.
-    test_size = float(opts.validation)/100
-    xtrain, xval, ytrain, yval = train_test_split(
-        x, encoder(y), test_size=test_size, random_state=seed)
-
-    # We need to poke an extra dimension into our input data for some reason.
-    xtrain, xval = fix_dims(xtrain, xval)
-    nq, nlabels = x.shape[1], len(categories)
-
     # Check that the validation data covers all the categories
     #if categories != sorted(set(ytrain)):
     #    raise ValueError("Training data is missing categories.")
     #if categories != sorted(set(yval)):
     #    raise ValueError("Test data is missing categories.")
 
-    tb = TensorBoard(log_dir=opts.tensorboard, histogram_freq=1)
+    #tb = TensorBoard(log_dir=opts.tensorboard, histogram_freq=1)
     #es = EarlyStopping(min_delta=0.005, patience=5, verbose=verbose)
     basename = inepath(opts.save_path)
-    checkpoint = ModelCheckpoint(
+    checkpoint = IntervalCheckpoint(
+        interval=60, # every minute
         filepath=basename+"-check.h5", # or "-check{epoch:03d}.h5",
-        ## To keep best loss, and not overwrite every epoch.
-        #monitor='loss', save_best_only=True, mode='auto',
+        verbose=not verbose, # only print log if fit() is not
         )
 
-    if opts.resume:
-        model = reload_net(inepath(opts.save_path)+'.h5')
-    else:
-        # Begin model definitions
-        model = Sequential()
-        #model.add(Embedding(4000, 128, input_length=x.shape[1]))
-        model.add(InputLayer(input_shape=(nq,1)))
-        model.add(Conv1D(nq, kernel_size=6, activation='relu'))
-        model.add(MaxPooling1D(pool_size=4))
-        model.add(Dropout(.17676))
-        model.add(Conv1D(nq//2, kernel_size=6, activation='relu'))
-        model.add(MaxPooling1D(pool_size=4))
-        model.add(Dropout(.20782))
-        model.add(Flatten())
-        model.add(Dense(nq//4, activation='tanh'))
-        model.add(Dropout(.20582))
-        model.add(Dense(nlabels, activation='softmax'))
-        loss = ('binary_crossentropy' if nlabels == 2
-                else 'categorical_crossentropy')
-        model.compile(loss=loss, optimizer=keras.optimizers.Adadelta(),
-                    metrics=['accuracy'])
+    # Create a MirroredStrategy.
+    strategy = tf.distribute.MirroredStrategy()
+    print(f'Number of devices: {strategy.num_replicas_in_sync}')
+
+    # Open a strategy scope.
+    with strategy.scope():
+        # Everything that creates variables should be under the strategy scope.
+        # In general this is only model construction & `compile()`.
+        if opts.resume:
+            model = reload_net(inepath(opts.save_path)+'.h5')
+        else:
+            nq, nlabels = x.shape[1], len(categories)
+            # Begin model definitions
+            model = Sequential()
+            #model.add(Embedding(4000, 128, input_length=x.shape[1]))
+            model.add(InputLayer(input_shape=(nq,1)))
+            model.add(Conv1D(nq, kernel_size=6, activation='relu'))
+            model.add(MaxPooling1D(pool_size=4))
+            model.add(Dropout(.17676))
+            model.add(Conv1D(nq//2, kernel_size=6, activation='relu'))
+            model.add(MaxPooling1D(pool_size=4))
+            model.add(Dropout(.20782))
+            model.add(Flatten())
+            model.add(Dense(nq//4, activation='tanh'))
+            model.add(Dropout(.20582))
+            model.add(Dense(nlabels, activation='softmax'))
+            loss = ('binary_crossentropy' if nlabels == 2
+                    else 'categorical_crossentropy')
+            model.compile(loss=loss, optimizer=keras.optimizers.Adadelta(),
+                          metrics=[ACCURACY])
     if verbose > 0:
         print(model.summary())
 
+    # From Graham501617: https://stackoverflow.com/a/65344405
+    # Prepare data for distributed processing
+    options = tf.data.Options()
+    options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.OFF
+    def shard(x, y):
+        # We need to poke an extra dimension into our input data for some reason.
+        x = fix_dims(x)
+        # Wrap data in Dataset objects.
+        data = tf.data.Dataset.from_tensor_slices((x, y))
+        # The batch size must now be set on the Dataset objects.
+        data = data.batch(opts.batch)
+        # Disable AutoShard.
+        data = data.with_options(options)
+        return data
+
+    # Split data into train and validation.
+    test_size = float(opts.validation)/100
+    xtrain, xval, ytrain, yval = train_test_split(
+        x, encoder(y), test_size=test_size, random_state=seed)
+    train_data = shard(xtrain, ytrain)
+    val_data = shard(xval, yval)
+    if test is not None:
+        if categories != sorted(set(test[1])):
+            raise ValueError("Test data has missing/additional categories.")
+        xtest, ytest = test[0], encoder(test[1])
+        test_data = shard(xtest, ytest)
+
     # Model Run
     history = model.fit(
-        xtrain, ytrain, batch_size=opts.batch,
-        steps_per_epoch=opts.steps, epochs=opts.epochs,
-        verbose=verbose, validation_data=(xval, yval),
+        train_data, steps_per_epoch=opts.steps, epochs=opts.epochs,
+        verbose=verbose, validation_data=val_data,
         #callbacks=[tb, es, checkpoint],
-        callbacks=[tb, checkpoint],
+        #callbacks=[tb, checkpoint],
+        callbacks=[checkpoint],
         )
 
     # Check the results against the validation data.
     score = None
     if test is not None:
-        if categories != sorted(set(test[1])):
-            raise ValueError("Validation data has missing categories.")
-        score = model.evaluate(test[0], encoder(test[1]), verbose=verbose)
+        score = model.evaluate(test_data, verbose=verbose)
         print('\nTest loss: ', score[0])
         print('Test accuracy:', score[1])
 
+    #print("history", history.history)
     save_output(
         save_path=opts.save_path,
         model=model,
@@ -316,7 +320,7 @@ def trad_nn(x, y, xtest=None, ytest=None, seed=235):
     model.add(Dropout(0.5))
     model.add(Dense(len(set(y)), activation='softmax'))
     model.compile(loss='categorical_crossentropy', optimizer="adam",
-                  metrics=['accuracy'])
+                  metrics=[ACCURACY])
     print(model.summary())
     history = model.fit(xtrain, ytrain, batch_size=10, epochs=10,
                         verbose=verbose, validation_data=(xval, yval))
@@ -330,24 +334,14 @@ def trad_nn(x, y, xtest=None, ytest=None, seed=235):
 
 def plot_history(history, basename=None):
     import matplotlib.pyplot as plt
-    plt.plot(history.history['accuracy'])
-    plt.plot(history.history['val_accuracy'])
+    plt.plot(history.history[ACCURACY])
+    plt.plot(history.history[VAL_ACCURACY])
     plt.title('model accuracy')
     plt.ylabel('accuracy')
     plt.xlabel('epoch')
     plt.legend(['train', 'test'], loc='upper left')
     with open(basename + ".svg", 'w') as fd:
         plt.savefig(fd, format='svg', bbox_inches='tight')
-
-def read_data(opts):
-    time_start = time.perf_counter()
-    #q, iq, label, n = sas_io.read_1d_seq(opts.path, tag=opts.train, verbose=verbose)
-    db = sas_io.sql_connect(opts.database)
-    iq, label = sas_io.read_sql(db, opts.train)
-    db.close()
-    time_end = time.perf_counter()
-    logging.info(f"File I/O Took {time_end-time_start} seconds for {len(label)} points of data.")
-    return np.asarray(iq), label
 
 def main(args):
     """
@@ -357,11 +351,15 @@ def main(args):
     :return: None.
     """
     opts = parser.parse_args(args)
-    data, label = read_data(opts)
+    time_start = time.perf_counter()
+    #(data, label), test = sas_io.read_data(opts.database, opts.train), None
+    (data, label), test = sas_io.read_data_tbm(opts.database, opts.limited)
+    time_end = time.perf_counter()
+    logging.info(f"File I/O Took {time_end-time_start} seconds for {len(label)} points of data.")
     #print(data.shape)
     seed = random.randint(0, 2 ** 32 - 1)
     logging.info(f"Random seed for this iter is {seed}")
-    oned_convnet(opts, data, label, seed=seed)
+    oned_convnet(opts, data, label, seed=seed, test=test)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)

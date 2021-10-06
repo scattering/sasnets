@@ -11,6 +11,9 @@ directory. See example_data.dat for a sample of the file format used.
 * don't save q, dq with every dataset
 * use hdf5 rather than sqlite
 
+* Set background as a log q range percentage.  With 10k samples, a beta
+  distribution B(alpha=2, beta=10) should have about 1 with a background
+  q at 0.33 or less, and 1% will be less than 0.55. 80% will be above 0.75.
 """
 from __future__ import print_function
 
@@ -72,6 +75,10 @@ parser.add_argument(
     "--count", type=int, default=1000,
     help="Count is the number of distinct models to generate.")
 parser.add_argument(
+    "--seed", type=int, default=1,
+    help="Seed value for the random seq"
+)
+parser.add_argument(
     "--template", type=str, default="",
     help="SANS dataset defining q and resolution.")
 parser.add_argument(
@@ -92,6 +99,9 @@ parser.add_argument(
 parser.add_argument(
     "--magnetic", type=str2bool, default=False,
     help="Allow magnetic parameters in the model")
+parser.add_argument(
+    "--sesans", type=str2bool, default=False,
+    help="Generate SESANS data instead of SANS data")
 parser.add_argument(
     "--cutoff", type=float, default=0.,
     help="""
@@ -252,6 +262,7 @@ def run_model(opts):
     precision = opts.precision
     res = opts.resolution
     noise = opts.noise
+    sesans = opts.sesans
 
     # Figure out which models we are using.
     include = model_group(opts.models, required=True)
@@ -267,6 +278,7 @@ def run_model(opts):
         data, index = sascomp.make_data({
             'qmin': 1e-4, 'qmax': 0.2, 'is2d': is2D, 'nq': nq, 'res': res/100,
             'accuracy': 'Low', 'view': 'log', 'zero': False,
+            'sesans': sesans,
             })
 
     # Open database and lookup model counts.
