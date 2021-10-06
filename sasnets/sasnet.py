@@ -191,15 +191,6 @@ def oned_convnet(opts, x, y, test=None, seed=235):
     categories = sorted(set(y))
     encoder = OnehotEncoder(categories)
 
-    # Split data into train and validation.
-    test_size = float(opts.validation)/100
-    xtrain, xval, ytrain, yval = train_test_split(
-        x, encoder(y), test_size=test_size, random_state=seed)
-
-    # We need to poke an extra dimension into our input data for some reason.
-    xtrain, xval = fix_dims(xtrain, xval)
-    nq, nlabels = x.shape[1], len(categories)
-
     # Check that the validation data covers all the categories
     #if categories != sorted(set(ytrain)):
     #    raise ValueError("Training data is missing categories.")
@@ -215,35 +206,70 @@ def oned_convnet(opts, x, y, test=None, seed=235):
         verbose=not verbose, # only print log if fit() is not
         )
 
-    if opts.resume:
-        model = reload_net(inepath(opts.save_path)+'.h5')
-    else:
-        # Begin model definitions
-        model = Sequential()
-        #model.add(Embedding(4000, 128, input_length=x.shape[1]))
-        model.add(InputLayer(input_shape=(nq,1)))
-        model.add(Conv1D(nq, kernel_size=6, activation='relu'))
-        model.add(MaxPooling1D(pool_size=4))
-        model.add(Dropout(.17676))
-        model.add(Conv1D(nq//2, kernel_size=6, activation='relu'))
-        model.add(MaxPooling1D(pool_size=4))
-        model.add(Dropout(.20782))
-        model.add(Flatten())
-        model.add(Dense(nq//4, activation='tanh'))
-        model.add(Dropout(.20582))
-        model.add(Dense(nlabels, activation='softmax'))
-        loss = ('binary_crossentropy' if nlabels == 2
-                else 'categorical_crossentropy')
-        model.compile(loss=loss, optimizer=keras.optimizers.Adadelta(),
-                      metrics=[ACCURACY])
+    # Create a MirroredStrategy.
+    strategy = tf.distribute.MirroredStrategy()
+    print(f'Number of devices: {strategy.num_replicas_in_sync}')
+
+    # Open a strategy scope.
+    with strategy.scope():
+        # Everything that creates variables should be under the strategy scope.
+        # In general this is only model construction & `compile()`.
+        if opts.resume:
+            model = reload_net(inepath(opts.save_path)+'.h5')
+        else:
+            nq, nlabels = x.shape[1], len(categories)
+            # Begin model definitions
+            model = Sequential()
+            #model.add(Embedding(4000, 128, input_length=x.shape[1]))
+            model.add(InputLayer(input_shape=(nq,1)))
+            model.add(Conv1D(nq, kernel_size=6, activation='relu'))
+            model.add(MaxPooling1D(pool_size=4))
+            model.add(Dropout(.17676))
+            model.add(Conv1D(nq//2, kernel_size=6, activation='relu'))
+            model.add(MaxPooling1D(pool_size=4))
+            model.add(Dropout(.20782))
+            model.add(Flatten())
+            model.add(Dense(nq//4, activation='tanh'))
+            model.add(Dropout(.20582))
+            model.add(Dense(nlabels, activation='softmax'))
+            loss = ('binary_crossentropy' if nlabels == 2
+                    else 'categorical_crossentropy')
+            model.compile(loss=loss, optimizer=keras.optimizers.Adadelta(),
+                          metrics=[ACCURACY])
     if verbose > 0:
         print(model.summary())
 
+    # From Graham501617: https://stackoverflow.com/a/65344405
+    # Prepare data for distributed processing
+    options = tf.data.Options()
+    options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.OFF
+    def shard(x, y):
+        # We need to poke an extra dimension into our input data for some reason.
+        x = fix_dims(x)
+        # Wrap data in Dataset objects.
+        data = tf.data.Dataset.from_tensor_slices((x, y))
+        # The batch size must now be set on the Dataset objects.
+        data = data.batch(opts.batch)
+        # Disable AutoShard.
+        data = data.with_options(options)
+        return data
+
+    # Split data into train and validation.
+    test_size = float(opts.validation)/100
+    xtrain, xval, ytrain, yval = train_test_split(
+        x, encoder(y), test_size=test_size, random_state=seed)
+    train_data = shard(xtrain, ytrain)
+    val_data = shard(xval, yval)
+    if test is not None:
+        if categories != sorted(set(test[1])):
+            raise ValueError("Test data has missing/additional categories.")
+        xtest, ytest = test[0], encoder(test[1])
+        test_data = shard(xtest, ytest)
+
     # Model Run
     history = model.fit(
-        xtrain, ytrain, batch_size=opts.batch,
-        steps_per_epoch=opts.steps, epochs=opts.epochs,
-        verbose=verbose, validation_data=(xval, yval),
+        train_data, steps_per_epoch=opts.steps, epochs=opts.epochs,
+        verbose=verbose, validation_data=val_data,
         #callbacks=[tb, es, checkpoint],
         #callbacks=[tb, checkpoint],
         callbacks=[checkpoint],
@@ -252,10 +278,7 @@ def oned_convnet(opts, x, y, test=None, seed=235):
     # Check the results against the validation data.
     score = None
     if test is not None:
-        if categories != sorted(set(test[1])):
-            raise ValueError("Test data has missing/additional categories.")
-        xtest, ytest = fix_dims(test[0]), encoder(test[1])
-        score = model.evaluate(xtest, ytest, verbose=verbose)
+        score = model.evaluate(test_data, verbose=verbose)
         print('\nTest loss: ', score[0])
         print('Test accuracy:', score[1])
 
