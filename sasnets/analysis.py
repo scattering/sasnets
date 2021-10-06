@@ -242,7 +242,7 @@ def plot_tSNE(classifier, x, categories, order=None):
     try:
         from umap import UMAP # umap is much faster but requies numpy
     except ImportError:
-        warnings.info("umap-learn missing. Using scikit TSNE instead")
+        warnings.warn("umap-learn missing. Using scikit TSNE instead")
         UMAP = None
         from sklearn.manifold import TSNE
         #from tsnecuda import TSNE # tsnecuda claims to be much faster
@@ -423,8 +423,9 @@ def plot_failures(failures, q, iq):
     import matplotlib.pyplot as plt
     index, predicted = failures
     if len(index) > 100:
-        warnings.warn(f"too many failures to plot {len(index)}")
-        return None
+        warnings.warn(f"too many failures to plot: {len(index)}")
+        index, predicted = index[:20], predicted[:20]
+        #return None
     for i, name in zip(index, predicted):
         plt.style.use("classic")
         plt.plot(q[i], iq[i])
