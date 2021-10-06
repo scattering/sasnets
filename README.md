@@ -47,3 +47,29 @@ Basic flow:
     bin/sasanal -c
 
 On windows, use `python bin/sasgen`, etc.
+
+On nisaba::
+
+    # Setup python environment
+    srun -t 60 --pty bash
+    module load anaconda
+    conda create -n sasnets tensorflow-gpu scikit-learn ipython numpy matplotlib
+    exit
+
+    # Run a limited example
+    srun --gres=gpu:4 -t 60 --mem=100000 --pty bash
+    PYTHONPATH=~/src/sasnets ~/.conda/envs/sasnets/bin/python -m sasnets.sasnet \
+    --database /wrk/tbm/sasnets/sasnets.db -v --batch=5000 -s /tmp/sasnets \
+    --epochs=10 --limited
+
+    # Run the full fit
+    PYTHONPATH=~/src/sasnets ~/.conda/envs/sasnets/bin/python -m sasnets.sasnet \
+    --database /wrk/tbm/sasnets/sasnets.db -v --batch=5000 -s /tmp/sasnets \
+    --epochs=10
+
+    # Resume the fit
+    PYTHONPATH=... -r
+
+    The above command can be put into a batch file and submitted with squeue.
+    Run time is 22s per epoch with 4 GPUs plus 3 min to load the data. So
+    running 500 epochs requires --time=180 minutes, or three hours.
