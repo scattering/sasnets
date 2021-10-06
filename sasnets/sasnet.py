@@ -79,6 +79,9 @@ parser.add_argument(
     "-v", "--verbose", action="store_true",
     help="Control output verbosity")
 parser.add_argument(
+    "--limited", action="store_true",
+    help="For debugging, only use the first few models")
+parser.add_argument(
     "-r", "--resume", action='store_true', dest='resume',
     help="resume fit stored in --save-path")
 parser.add_argument(
@@ -212,7 +215,10 @@ def sql_net(opts):
     history = model.fit_generator(
         train_seq, steps_per_epoch=opts.steps, epochs=opts.epochs,
         workers=1, verbose=verbose, validation_data=validation_seq,
-        max_queue_size=1, callbacks=[tb, es])
+        max_queue_size=1,
+        #callbacks=[es],
+        callbacks=[tb, es],
+        )
 
     score = None
     if xval is not None and yval is not None:
@@ -311,8 +317,11 @@ def oned_convnet(opts, x, y, test=None, seed=235):
     score = None
     if test is not None:
         if categories != sorted(set(test[1])):
-            raise ValueError("Validation data has missing categories.")
-        score = model.evaluate(test[0], encoder(test[1]), verbose=verbose)
+            raise ValueError("Test data has missing/additional categories.")
+        xtest, ytest = fix_dims(test[0]), encoder(test[1])
+        print(type(xtest), type(ytest))
+        print(xtest.shape, ytest.shape)
+        score = model.evaluate(xtest, ytest, verbose=verbose)
         print('\nTest loss: ', score[0])
         print('Test accuracy:', score[1])
 
@@ -387,6 +396,36 @@ def read_data(opts):
     logging.info(f"File I/O Took {time_end-time_start} seconds for {len(label)} points of data.")
     return np.asarray(iq), label
 
+def read_data_tbm(opts, part='train'):
+    """
+    Read data from Tyler Martin's tables. This dataset splits data into
+    into three tables for different detector distances low_q, med_q and high_q.
+
+    The returned data uses a simple join converted to log scale and normalized
+    by the geometric mean. No noise is added. Data may be with or without
+    background, depending on the *--database* option set on the command line.
+    """
+    time_start = time.perf_counter()
+    #q, iq, label, n = sas_io.read_1d_seq(opts.path, tag=opts.train, verbose=verbose)
+    db = sas_io.sql_connect(opts.database)
+    # For debugging, only load the first three models
+    limit = 3*(30000 if part == 'train' else 5000) if opts.limited else None
+    # Data is split across three tables with shared rowid key.
+    # TODO: Could do this by chunks so that it takes less memory.
+    iq_low, label = sas_io.read_sql(db, f'low_q_{part}', input_encoder=None, limit=limit)
+    iq_med, label = sas_io.read_sql(db, f'med_q_{part}', input_encoder=None, limit=limit)
+    iq_high, label = sas_io.read_sql(db, f'high_q_{part}', input_encoder=None, limit=limit)
+    iq = np.empty(
+        (len(iq_low), len(iq_low[0])+len(iq_med[0])+len(iq_high[0])),
+        dtype=iq_low[0].dtype,
+    )
+    for k, (iq_low_k, iq_med_k, iq_high_k) in enumerate(zip(iq_low, iq_med, iq_high)):
+        iq[k] = sas_io.input_encoder(np.hstack((iq_low_k, iq_med_k, iq_high_k)))
+    db.close()
+    time_end = time.perf_counter()
+    logging.info(f"File I/O Took {time_end-time_start} seconds for {len(label)} points of data.")
+    return iq, label
+
 def main(args):
     """
     Main method. Takes in arguments from command line and runs a model.
@@ -395,11 +434,12 @@ def main(args):
     :return: None.
     """
     opts = parser.parse_args(args)
-    data, label = read_data(opts)
+    data, label = read_data_tbm(opts)
+    test = read_data_tbm(opts, part='test')
     #print(data.shape)
     seed = random.randint(0, 2 ** 32 - 1)
     logging.info(f"Random seed for this iter is {seed}")
-    oned_convnet(opts, data, label, seed=seed)
+    oned_convnet(opts, data, label, seed=seed, test=test)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)

@@ -30,13 +30,25 @@ import numpy as np
 
 DB_DTYPE = np.dtype('<f4')
 DB_FILE = "sasnets.db"
-def sql_connect(dbfile=DB_FILE):
+def sql_connect(dbfile=DB_FILE, mode='ro'):
+    """
+    Open the sqlite database.
+
+    Use *mode='ro'* for read-only access (the default). This is required
+    if the database is on an NFS mounted filesystem since locking is not
+    supported by SQLite.
+    """
     import sqlite3
     # since we are using "with connection:" for our transactions, we
     # get commit-rollback for free.  Otherwise we might be tempted to
     # use auto-commit as follows:
     #      conn = sqlite3.connect(dbfile, isolation_level=None)
-    conn = sqlite3.connect(dbfile)
+    #conn = sqlite3.connect(dbfile)
+    if dbfile.startswith('file:'):
+        uri = f"{dbfile}?mode={mode}"
+    else:
+        uri = f"file:{os.path.realpath(os.path.expanduser(dbfile))}?mode={mode}"
+    conn = sqlite3.connect(uri, uri=True)
     return conn
 
 def sql_tables(db):
@@ -68,8 +80,11 @@ def input_encoder(iq):
 # Then we can maybe learn to ignore noise in the data?
 # TODO: generalize to take a set of columns a column to data transform
 # Either that or give a choice amongst standard transforms, such as log/linear
-def iread_sql(db, tag, metatable, batch_size=5,
-              encoder=lambda y: y, input_encoder=input_encoder):
+def iread_sql(db, tag, batch_size=5,
+              encoder=lambda y: y,
+              input_encoder=input_encoder,
+              random=True,
+              ):
     """
     Generator that gets its data from a SQL database.
 
@@ -79,36 +94,72 @@ def iread_sql(db, tag, metatable, batch_size=5,
     Data is chosen at random with replacement and runs forever.
 
     Note: batches may be different sizes if some datasets contain NaN.
-    It would be better to strip these at the source...
+    It would be better to strip these before adding to the database.
+
+    Random batches require a table with no deleted rows. If there are a few
+    deleted rows then some batches may be smaller. If there are many deleted
+    rows then some batches may be empty.
 
     :param db: The SQL database connection.
     :param datatable: The data table name to connect to.
     :param encoder: *encoder(label)* converts model name to target encoding.
     :param input_encoder: *input_encoder(iq)* scale and transform iq
+    :param random: return random batches rather than ordered batches
     """
     # Build query string, checking values before substituting
-    batch_size = int(batch_size) # force integer
     assert tag.isidentifier()
-    # using implicit rowid column in (most) SQLite tables.
-    random_row_query = f"""
-        SELECT (model, iq) FROM {tag} WHERE rowid IN
-            (SELECT rowid FROM tag ORDER BY RANDOM() LIMIT {batch_size})
-        """
-    ## PostgreSQL supports tablesample
-    #random_row_query = f"""
-    #    SELECT (iq, model) FROM {datatable}
-    #        TABLESAMPLE SYSTEM_ROWS({batch_size})"""
+    sql_batch = _random_sqlite if random else _ordered_sqlite
+    columns = "model, iq"
+    for batch in sql_batch(db, tag, columns, batch_size):
+        labels, iq = zip(*batch)
+        # Convert binary blob back numpy array
+        iq = [asdata(v) for v in iq]
+        # Normalize to peak = 1 and take the log
+        if input_encoder is not None:
+            iq = [input_encoder(v) for v in iq]
+        yield iq, encoder(labels)
 
+def _random_sqlite(db, table, columns, batch_size):
     with db, closing(db.cursor()) as cursor:
+        # Find number of rows in the table. Assumes no deleted rows.
+        cursor.execute(f"SELECT max(rowid) FROM {table} LIMIT 1")
+        num_rows = cursor.fetchall()[0][0]
+        # Fetch k random rows.
+        random_row_query = f"""
+            SELECT {columns} FROM {table}
+            WHERE rowid IN (
+                SELECT abs(random())%{num_rows}+1 FROM {table} LIMIT {batch_size}
+            )
+            """
+        #print(random_row_query)
         while True:
             cursor.execute(random_row_query)
-            data = cursor.fetchall()
-            label, iq = zip(*data)
-            # Convert binary blob back into numpy array
-            iq = [asdata(v) for v in iq]
-            if input_encoder is not None:
-                iq = [input_encoder(v) for v in iq]
-            yield iq, encoder(label)
+            batch = cursor.fetchall()
+            yield batch
+    ## PostgreSQL supports tablesample
+    #random_row_query = f"""
+    #    SELECT {columns} FROM {table}
+    #        TABLESAMPLE SYSTEM_ROWS({batch_size})"""
+
+def _ordered_sqlite(db, table, columns, batch_size):
+    ordered_query = f"SELECT {columns} from {table}"
+    batch = []  # Start with an empty batch
+    with db, closing(db.cursor()) as cursor:
+        while True:
+            # Query from the start of the database
+            cursor.execute(ordered_query)
+            # If rollover then fill the last batch from the start and yield
+            if batch:
+                batch = batch + cursor.fetchmany(batch_size - len(batch))
+                yield batch
+            # yield full batches until the final unfilled batch. This breaks
+            # the inner loop and goes back to the outer loop starting the
+            # cycle again.
+            while True:
+                batch = cursor.fetchmany(batch_size)
+                if len(batch) < batch_size:
+                    break
+                yield batch
 
 def model_counts(db, tag='train'):
     """
@@ -130,9 +181,10 @@ def _table_exists(cursor, tag):
     result = cursor.fetchall()
     return len(result) > 0
 
-def read_sql(db, tag='train', input_encoder=input_encoder):
+def read_sql(db, tag='train', input_encoder=input_encoder, limit=None):
     assert tag.isidentifier()
-    all_rows = f"SELECT model, iq FROM {tag}"
+    limit_str = "" if limit is None else f" LIMIT {limit}"
+    all_rows = f"SELECT model, iq FROM {tag}{limit_str}"
     # Note: Not writing so don't need "with db".
     with closing(db.cursor()) as cursor:
         if not _table_exists(cursor, tag):
