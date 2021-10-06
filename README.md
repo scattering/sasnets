@@ -70,6 +70,6 @@ On nisaba::
     # Resume the fit
     PYTHONPATH=... -r
 
-    The above command can be put into a batch file and submitted with squeue.
+    The above command can be put into a batch file and submitted with sbatch.
     Run time is 22s per epoch with 4 GPUs plus 3 min to load the data. So
     running 500 epochs requires --time=180 minutes, or three hours.
