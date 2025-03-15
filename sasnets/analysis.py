@@ -241,12 +241,12 @@ def plot_tSNE(classifier, x, categories):
     print('arr')
     print(arr[2])
     t = TSNE(n_components=2, verbose=2, n_iter=3000, perplexity=55)
-    classx = t.fit_transform(xt)
+    classx = t.fit_transform(np.array(xt))
     if sns is not None:
         print('sns')
         p = np.array(sns.color_palette("hls", len(categories)))
         plt.scatter(classx[:, 0], classx[:, 1],alpha=0.3,
-                    c=p[np.asarray(factorize(arr)[0]).astype(np.int)])
+                    c=p[np.asarray(factorize(arr)[0]).astype(int)])
     else:
         print('scatter')
         plt.scatter(classx[:, 0], classx[:, 1])
